@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from interfaces.api.v1 import novels, chapters, bible, ai
 from web.routers.stats import create_stats_router
 from web.services.stats_service import StatsService
-from web.repositories.stats_repository import StatsRepository
+from web.repositories.stats_repository_adapter import StatsRepositoryAdapter
 
 
 # 创建 FastAPI 应用
@@ -33,10 +33,10 @@ app.include_router(chapters.router, prefix="/api/v1")
 app.include_router(bible.router, prefix="/api/v1")
 app.include_router(ai.router, prefix="/api/v1")
 
-# 注册统计路由（临时保留旧实现）
+# 注册统计路由（使用适配器连接新架构）
 from pathlib import Path
-books_root = Path("./data")  # 使用与新架构相同的数据目录
-stats_repository = StatsRepository(books_root)
+data_root = Path("./data")  # 新架构的数据目录
+stats_repository = StatsRepositoryAdapter(data_root)
 stats_service = StatsService(stats_repository)
 stats_router = create_stats_router(stats_service)
 app.include_router(stats_router, prefix="/api/stats", tags=["statistics"])
