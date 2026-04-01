@@ -14,7 +14,7 @@
 | 统计 API 前缀 | **`/api/stats`**（响应包一层 `SuccessResponse`） |
 | 开发代理 | 前端 `npm run dev` 时，`/api` → `http://127.0.0.1:8000`（见 `web-app/vite.config.ts`）。 |
 | 直连后端 | `web-app/src/api/config.ts` 中 `apiClient` 默认 `baseURL = http://localhost:8000/api/v1`（不经 Vite 代理也可）。 |
-| 环境变量 | `ANTHROPIC_API_KEY`：聊天、流式聊天、AI 生成章节等依赖 LLM 的接口必需。 |
+| 环境变量 | `ANTHROPIC_API_KEY` 或 `ANTHROPIC_AUTH_TOKEN`（二选一）；可选 `ANTHROPIC_BASE_URL`。可放在 **`aitext/.env`**：`interfaces/main.py` 启动时会通过 `load_env.py` 自动加载。 |
 
 ---
 
@@ -99,7 +99,30 @@
 |------|------|------|
 | POST | `/api/v1/ai/generate-chapter` | 按大纲生成章节正文（body：`novel_id`, `chapter_number`, `outline`） |
 
-### 3.9 统计 `StatsService` — 前缀 `/api/stats`
+### 3.9 工作流（子项目 8）— `interfaces/api/v1/generation.py` + `workflowApi`
+
+已实现（`generation` 路由，`/api/v1` 前缀）：
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/v1/novels/{novel_id}/generate-chapter` | 完整工作流：上下文 + LLM + 一致性报告（body：`chapter_number`, `outline`） |
+| GET | `/api/v1/novels/{novel_id}/consistency-report` | 当前为占位空报告 |
+| GET / POST | `/api/v1/novels/{novel_id}/storylines` | 故事线列表 / 创建 |
+| GET / POST | `/api/v1/novels/{novel_id}/plot-arc` | 情节弧读 / 创建或更新 |
+
+**尚未在后端注册**（`workflowApi` 中已写注释，调用会 404，需补 FastAPI 路由或先隐藏 UI）：
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/v1/novels/{novel_id}/jobs/plan` | 结构规划任务 |
+| POST | `/api/v1/novels/{novel_id}/jobs/write` 等 | 撰稿 / run / export |
+| GET / POST | `/api/v1/jobs/{job_id}`、`/cancel` | 任务轮询与取消 |
+
+轻量生成（无完整工作流）仍用 **§3.8** `POST /api/v1/ai/generate-chapter`（`aiApi`）。
+
+实施清单：`docs/superpowers/plans/2026-04-02-subproject-8-frontend-extensions.md`。
+
+### 3.10 统计 `StatsService` — 前缀 `/api/stats`
 
 响应格式：`{ "data": <payload>, ... }`（`SuccessResponse`）。
 
@@ -125,7 +148,8 @@
 | `api/chat.ts` | `/api/v1`（axios + `fetch` 流式） | Chat 全部 | 已对齐 |
 | `api/ai.ts` | `apiClient` | `POST .../ai/generate-chapter` | 后端有；**当前业务组件未引用** |
 | `api/stats.ts` | `/api`（相对，经代理）；响应拦截器解包 `SuccessResponse.data` | `/api/stats/*` | 已对齐 |
-| `api/book.ts` | `/api`（相对） | 见下节「遗留」 | **后端无对应路由** |
+| `api/workflow.ts` | `apiClient` | 见 §3.9 | **generate-chapter / storylines / plot-arc 已对齐**；Job 路由仍待后端 |
+| `api/book.ts` | `/api`（相对） | 见下节「遗留」 | **后端无对应路由**（`jobApi` 已迁 `workflowApi`） |
 
 ---
 
@@ -146,7 +170,7 @@
 
 仍从 `book.ts` 引用 **`bookApi`** 的组件（需逐步替换）：`BiblePanel.vue`、`Chapter.vue`（部分）等。  
 **图表侧栏已对接 v1**：`CastGraphCompact.vue` → `castApi`；`KnowledgeTripleGraph.vue`、`KnowledgePanel.vue`（叙事/检索/保存）→ `knowledgeApi`，章标题来自 `chapterApi.listChapters`。  
-**`jobApi`**：`useWorkbench.ts`、`JobStatusIndicator.vue`。
+**任务 API**：`workflowApi`（`useWorkbench.ts`、`JobStatusIndicator.vue`）；遗留 `book.ts` 内 `jobApi` 已不再被引用。
 
 ---
 
@@ -155,7 +179,7 @@
 | 区域 / 组件 | 使用的 API 模块 |
 |-------------|-----------------|
 | `Home.vue` | `novelApi` |
-| `useWorkbench.ts` | `novelApi`、`chapterApi`、`statsStore`（stats）、`jobApi`（无后端） |
+| `useWorkbench.ts` | `novelApi`、`chapterApi`、`statsStore`（stats）、`workflowApi`（任务；后端待实现） |
 | `ChatArea.vue` | `chat.ts` → `chatApi` |
 | `Cast.vue` | `castApi` |
 | `BiblePanel.vue` | `bookApi`（遗留） |
@@ -163,7 +187,7 @@
 | `CastGraphCompact.vue` | `castApi` |
 | `Chapter.vue` | `chapterApi` + `bookApi`（遗留） |
 | `statsStore` / 侧栏统计 | `statsApi` |
-| `JobStatusIndicator.vue` | `jobApi`（无后端） |
+| `JobStatusIndicator.vue` | `workflowApi` |
 
 ---
 
@@ -187,4 +211,4 @@
 
 | 日期 | 说明 |
 |------|------|
-| 2026-04-02 | 初版；图表 v1 对接；统计修复（`stats.ts` 解包 `SuccessResponse`；adapter 从 `novels/*.json` 提供 outline） |
+| 2026-04-02 | 初版与图表/统计修复；子项目 8 前端扩展：`workflow.ts`、实施计划 `2026-04-02-subproject-8-frontend-extensions.md`、`workflowApi` 接线 |
