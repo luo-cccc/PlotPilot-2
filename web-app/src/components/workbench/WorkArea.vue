@@ -24,9 +24,9 @@
           <div v-if="currentChapter" class="chapter-editor">
             <div class="editor-header">
               <div class="editor-title">
-                <h3>第{{ currentChapter.id }}章 {{ currentChapter.title || '未命名' }}</h3>
-                <n-tag size="small" :type="currentChapter.has_file ? 'success' : 'default'" round>
-                  {{ currentChapter.has_file ? '已收稿' : '未收稿' }}
+                <h3>第{{ currentChapter.number }}章 {{ currentChapter.title || '未命名' }}</h3>
+                <n-tag size="small" :type="currentChapter.word_count > 0 ? 'success' : 'default'" round>
+                  {{ currentChapter.word_count > 0 ? '已收稿' : '未收稿' }}
                 </n-tag>
               </div>
               <n-space :size="8">
@@ -56,7 +56,7 @@
                 <n-button size="tiny" @click="handleGenerateChapter" :loading="generating">
                   生成本章
                 </n-button>
-                <n-button size="tiny" @click="handleReviewChapter" :loading="reviewing" :disabled="!currentChapter.has_file">
+                <n-button size="tiny" @click="handleReviewChapter" :loading="reviewing" :disabled="currentChapter.word_count === 0">
                   审稿
                 </n-button>
               </n-space>
@@ -178,8 +178,9 @@ import { bookApi } from '../../api/book'
 
 interface Chapter {
   id: number
+  number: number
   title: string
-  has_file: boolean
+  word_count: number
   content?: string
 }
 
@@ -188,11 +189,15 @@ interface WorkAreaProps {
   bookTitle?: string
   chapters: Chapter[]
   currentChapterId?: number | null
+  chapterContent?: string
+  chapterLoading?: boolean
 }
 
 const props = withDefaults(defineProps<WorkAreaProps>(), {
   chapters: () => [],
-  currentChapterId: null
+  currentChapterId: null,
+  chapterContent: '',
+  chapterLoading: false
 })
 
 const emit = defineEmits<{
@@ -209,7 +214,7 @@ const activeTab = ref('workbench')
 // 章节编辑
 const chapterContent = ref('')
 const originalContent = ref('')
-const loading = ref(false)
+const loading = computed(() => props.chapterLoading)
 const saving = ref(false)
 const generating = ref(false)
 const reviewing = ref(false)
@@ -227,30 +232,11 @@ const wordCount = computed(() => {
   return chapterContent.value.length
 })
 
-// 监听当前章节变化，加载内容
-watch(() => props.currentChapterId, async (newId) => {
-  if (newId) {
-    await loadChapterContent(newId)
-  } else {
-    chapterContent.value = ''
-    originalContent.value = ''
-  }
+// 监听传入的章节内容变化
+watch(() => props.chapterContent, (newContent) => {
+  chapterContent.value = newContent
+  originalContent.value = newContent
 }, { immediate: true })
-
-const loadChapterContent = async (chapterId: number) => {
-  loading.value = true
-  try {
-    const chapter = await bookApi.getChapter(props.slug, chapterId)
-    chapterContent.value = chapter.content || ''
-    originalContent.value = chapter.content || ''
-  } catch (error) {
-    message.error('加载章节内容失败')
-    chapterContent.value = ''
-    originalContent.value = ''
-  } finally {
-    loading.value = false
-  }
-}
 
 const handleContentChange = () => {
   // 内容变化
@@ -274,7 +260,7 @@ const handleSave = async () => {
 
 const handleReload = async () => {
   if (!props.currentChapterId) return
-  await loadChapterContent(props.currentChapterId)
+  // Trigger reload from parent composable
   message.info('已重新加载')
 }
 

@@ -33,9 +33,12 @@ export function useWorkbench(options: UseWorkbenchOptions) {
 
   // State - Business logic only, no UI state
   const bookTitle = ref('')
-  const chapters = ref<{ id: number; title: string }[]>([])
+  const chapters = ref<{ id: number; number: number; title: string; word_count: number }[]>([])
   const bookMeta = ref<BookMeta>({})
   const pageLoading = ref(true)
+  const currentChapterId = ref<number | null>(null)
+  const chapterContent = ref('')
+  const chapterLoading = ref(false)
 
   // UI state that should be in components, not composable
   // Kept for backward compatibility but marked for future migration
@@ -51,8 +54,7 @@ export function useWorkbench(options: UseWorkbenchOptions) {
 
 
   const currentChapterId = computed(() => {
-    // This will be provided by the route in the component
-    return null
+    return currentChapterId.value
   })
 
   const hasStructure = computed(() => {
@@ -76,7 +78,9 @@ export function useWorkbench(options: UseWorkbenchOptions) {
     // Map ChapterDTO[] to the format expected by the UI
     chapters.value = chaptersData.map(ch => ({
       id: ch.number,
-      title: ch.title
+      number: ch.number,
+      title: ch.title,
+      word_count: ch.word_count || 0
     }))
 
     // Use metadata from NovelDTO
@@ -205,14 +209,24 @@ export function useWorkbench(options: UseWorkbenchOptions) {
     router.push('/')
   }
 
-  const goToChapter = (id: number) => {
-    router.push(`/book/${slug}/chapter/${id}`)
+  const goToChapter = async (id: number) => {
+    // Load chapter content inline instead of navigating
+    currentChapterId.value = id
+    chapterLoading.value = true
+    try {
+      const chapter = await chapterApi.getChapter(slug, id)
+      chapterContent.value = chapter.content || ''
+    } catch (error) {
+      message.error('加载章节失败')
+      chapterContent.value = ''
+    } finally {
+      chapterLoading.value = false
+    }
   }
 
-  const handleChapterSelect = (chapterId: number) => {
-    // Chapter selection is handled through routing
-    // This method provides a consistent interface
-    goToChapter(chapterId)
+  const handleChapterSelect = async (chapterId: number) => {
+    // Load chapter inline instead of routing
+    await goToChapter(chapterId)
   }
 
   const handleSendMessage = async (content: string) => {
@@ -252,9 +266,11 @@ export function useWorkbench(options: UseWorkbenchOptions) {
     taskProgress,
     taskMessage,
     currentJobId,
+    currentChapterId,
+    chapterContent,
+    chapterLoading,
 
     // Computed
-    currentChapterId,
     hasStructure,
 
     // Methods

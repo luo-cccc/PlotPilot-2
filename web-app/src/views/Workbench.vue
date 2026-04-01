@@ -10,7 +10,7 @@
               :slug="slug"
               :chapters="chapters"
               :current-chapter-id="currentChapterId"
-              @select="goToChapter"
+              @select="handleChapterSelect"
               @back="goHome"
             />
           </template>
@@ -24,6 +24,8 @@
                   :book-title="bookTitle"
                   :chapters="chapters"
                   :current-chapter-id="currentChapterId"
+                  :chapter-content="chapterContent"
+                  :chapter-loading="chapterLoading"
                   @set-right-panel="setRightPanel"
                   @start-write="openWorkflowGenerate"
                   @chapter-updated="handleChapterUpdated"
@@ -89,17 +91,15 @@ const {
   pageLoading,
   bookMeta,
   currentJobId,
+  currentChapterId,
+  chapterContent,
+  chapterLoading,
   setRightPanel,
   loadDesk,
   goHome,
   goToChapter,
+  handleChapterSelect,
 } = useWorkbench({ slug, chatAreaRef: workAreaRef })
-
-// Override currentChapterId with route-based computation
-const currentChapterId = computed(() => {
-  if (route.name === 'Chapter') return Number(route.params.id)
-  return null
-})
 
 onMounted(async () => {
   try {
