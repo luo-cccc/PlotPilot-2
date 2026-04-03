@@ -22,11 +22,10 @@ export interface BookMeta {
 
 export interface UseWorkbenchOptions {
   slug: string
-  chatAreaRef?: { fetchMessages?: () => Promise<void> } | null
 }
 
 export function useWorkbench(options: UseWorkbenchOptions) {
-  const { slug, chatAreaRef } = options
+  const { slug } = options
   const router = useRouter()
   const message = useMessage()
   const statsStore = useStatsStore()
@@ -89,8 +88,7 @@ export function useWorkbench(options: UseWorkbenchOptions) {
   const loadData = async (includeStats = false) => {
     pageLoading.value = true
     try {
-      // Parallel API calls for performance
-      const promises = [loadDesk()]
+      const promises: Promise<unknown>[] = [loadDesk()]
       if (includeStats) {
         promises.push(statsStore.loadBookAllStats(slug, STATS_DAYS, true))
       }
@@ -105,8 +103,6 @@ export function useWorkbench(options: UseWorkbenchOptions) {
     statsStore.onJobCompleted(slug)
     // Refresh workbench data
     await loadDesk()
-    // Refresh chat messages if reference available
-    await chatAreaRef?.fetchMessages?.()
     // Force Bible panel refresh if visible
     if (rightPanel.value === 'bible') {
       biblePanelKey.value += 1
@@ -225,21 +221,10 @@ export function useWorkbench(options: UseWorkbenchOptions) {
     await goToChapter(chapterId)
   }
 
-  const handleSendMessage = async (content: string) => {
-    // Message sending is handled by ChatArea component
-    // This method provides a consistent interface for future use
-    // Currently, ChatArea manages its own message state
-  }
-
-  const handleUpdateSettings = async (settings: Record<string, any>) => {
+  const handleUpdateSettings = async (_settings: Record<string, unknown>) => {
     // Settings are managed by child components (BiblePanel, KnowledgePanel)
     // This method provides a consistent interface for future use
     // Current architecture uses delegation pattern
-  }
-
-  const onMessagesUpdated = () => {
-    // Callback for when chat messages are updated
-    // Can be used to trigger side effects or refresh data
   }
 
   // Cleanup on unmount
@@ -271,13 +256,11 @@ export function useWorkbench(options: UseWorkbenchOptions) {
 
     // Methods
     setRightPanel,
-    onMessagesUpdated,
     loadDesk,
     loadData,
     handleJobCompleted,
     restoreJobState,
     handleChapterSelect,
-    handleSendMessage,
     handleUpdateSettings,
     openPlanModal,
     confirmPlan,

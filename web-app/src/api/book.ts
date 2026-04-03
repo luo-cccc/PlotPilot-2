@@ -12,8 +12,6 @@ import type {
   ChapterReview,
   ChapterReviewAiResponse,
   ChapterStructure,
-  ChatMessagesResponse,
-  ChatResponse,
   SimpleResponse,
   SlugResponse,
   JobCreateResponse,
@@ -41,14 +39,12 @@ import type {
 // Current dependencies:
 // - bookApi: BiblePanel.vue, CastGraphCompact.vue, KnowledgePanel.vue,
 //            KnowledgeTripleGraph.vue, useWorkbench.ts, Cast.vue, Chapter.vue (desk only)
-// - chatApi: ChatArea.vue
 // - jobApi: 已迁移至 api/workflow.ts（workflowApi）
 //
 // For new code, use the RESTful API clients:
 // - novelApi from './novel.ts' for novel operations
 // - chapterApi from './chapter.ts' for chapter operations (✅ FULLY MIGRATED)
 // - bibleApi from './bible.ts' for bible operations (partial - needs bulk update)
-// - aiApi from './ai.ts' for AI generation
 //
 // TODO: Migrate existing components to new API clients before removing this file.
 
@@ -100,60 +96,6 @@ export const bookApi = {
   /** @deprecated Use chapterApi.getChapterStructure() instead */
   getChapterStructure: (slug: string, chapterId: number) =>
     request.get<ChapterStructure>(`/book/${slug}/chapter/${chapterId}/structure`) as Promise<ChapterStructure>,
-}
-
-export const chatApi = {
-  getMessages: (slug: string) => request.get<ChatMessagesResponse>(`/book/${slug}/chat/messages`) as Promise<ChatMessagesResponse>,
-  /** 非流式；工具模式为多轮 cast/story/kg */
-  send: (
-    slug: string,
-    message: string,
-    opts?: {
-      use_cast_tools?: boolean
-      history_mode?: 'full' | 'fresh'
-      clear_thread?: boolean
-    }
-  ) =>
-    request.post<ChatResponse>(
-      `/book/${slug}/chat`,
-      {
-        message,
-        regenerate_digest: false,
-        use_cast_tools: opts?.use_cast_tools ?? true,
-        history_mode: opts?.history_mode ?? 'full',
-        clear_thread: opts?.clear_thread ?? false,
-      },
-      { timeout: 180000 }
-    ) as Promise<ChatResponse>,
-  /** 清空 thread.json；digestToo 时同时删 context_digest.md */
-  clearThread: (slug: string, digestToo = false) =>
-    request.post<SimpleResponse>(`/book/${slug}/chat/clear`, { digest_too: digestToo }) as Promise<SimpleResponse>,
-
-  /**
-   * SSE：type=chunk 正文片段；type=tool 工具步骤（类 thinking）；type=done 结束；type=error 失败。
-   * use_cast_tools=true 时先推送多段 tool，再将正文分块推送。
-   */
-  sendStream: (
-    slug: string,
-    message: string,
-    opts?: {
-      use_cast_tools?: boolean
-      history_mode?: 'full' | 'fresh'
-      clear_thread?: boolean
-    }
-  ) => {
-    return fetch(`/api/book/${slug}/chat/stream`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        message,
-        regenerate_digest: false,
-        use_cast_tools: opts?.use_cast_tools ?? true,
-        history_mode: opts?.history_mode ?? 'full',
-        clear_thread: opts?.clear_thread ?? false,
-      }),
-    })
-  },
 }
 
 export const jobApi = {

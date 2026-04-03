@@ -20,7 +20,6 @@
             <n-split direction="horizontal" :min="0.40" :max="0.75" :default-size="0.60">
               <template #1>
                 <WorkArea
-                  ref="workAreaRef"
                   :slug="slug"
                   :book-title="bookTitle"
                   :chapters="chapters"
@@ -49,7 +48,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { onMounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useMessage } from 'naive-ui'
 import { useWorkbench } from '../composables/useWorkbench'
@@ -62,7 +61,6 @@ const route = useRoute()
 const message = useMessage()
 
 const slug = route.params.slug as string
-const workAreaRef = ref<InstanceType<typeof WorkArea> | null>(null)
 
 const handleChapterUpdated = async () => {
   await loadDesk()
@@ -85,7 +83,7 @@ const {
   goHome,
   goToChapter,
   handleChapterSelect,
-} = useWorkbench({ slug, chatAreaRef: workAreaRef })
+} = useWorkbench({ slug })
 
 const currentChapter = computed(() => {
   if (!currentChapterId.value) return null
