@@ -20,7 +20,7 @@ except Exception:
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from interfaces.api.v1 import novels, chapters, bible, cast, ai, knowledge, chat, generation, story_structure
+from interfaces.api.v1 import novels, chapters, bible, cast, knowledge, generation, story_structure
 from web.routers.stats import create_stats_router
 from web.services.stats_service import StatsService
 from web.repositories.stats_repository_adapter import StatsRepositoryAdapter
@@ -48,9 +48,7 @@ app.include_router(novels.router, prefix="/api/v1")
 app.include_router(chapters.router, prefix="/api/v1/novels")
 app.include_router(bible.router, prefix="/api/v1")
 app.include_router(cast.router, prefix="/api/v1")
-app.include_router(ai.router, prefix="/api/v1")
 app.include_router(knowledge.router, prefix="/api/v1")
-app.include_router(chat.router, prefix="/api/v1")
 app.include_router(generation.router, prefix="/api/v1")
 app.include_router(story_structure.router, prefix="/api/v1")
 

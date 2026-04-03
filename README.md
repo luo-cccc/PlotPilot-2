@@ -132,12 +132,9 @@ POST   /api/v1/bible/novels/{novel_id}/bible/characters   添加人物
 POST   /api/v1/bible/novels/{novel_id}/bible/world-settings 添加世界设定
 ```
 
-### AI API
+### 章节生成（工作流）
 
-```
-POST   /api/v1/ai/generate/chapter    生成章节内容
-POST   /api/v1/ai/generate/outline    生成小说大纲
-```
+见 `interfaces/api/v1/generation.py`：`POST /api/v1/novels/{novel_id}/generate-chapter`、`generate-chapter-stream`、`hosted-write-stream` 等。
 
 ## 测试
 

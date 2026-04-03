@@ -9,6 +9,8 @@ from domain.novel.repositories.novel_repository import NovelRepository
 from domain.novel.repositories.chapter_repository import ChapterRepository
 from domain.shared.exceptions import EntityNotFoundError
 from application.dtos.novel_dto import NovelDTO
+from domain.structure.story_node import StoryNode, NodeType
+from infrastructure.persistence.database.story_node_repository import StoryNodeRepository
 
 
 class NovelService:
@@ -21,15 +23,18 @@ class NovelService:
         self,
         novel_repository: NovelRepository,
         chapter_repository: ChapterRepository,
+        story_node_repository: Optional[StoryNodeRepository] = None,
     ):
         """初始化服务
 
         Args:
             novel_repository: Novel 仓储
             chapter_repository: Chapter 仓储（统计以落盘章节为准）
+            story_node_repository: StoryNode 仓储（用于同步叙事结构）
         """
         self.novel_repository = novel_repository
         self.chapter_repository = chapter_repository
+        self.story_node_repository = story_node_repository
 
     def create_novel(
         self,
@@ -121,12 +126,20 @@ class NovelService:
             更新后的 NovelDTO
 
         Raises:
-            ValueError: 如果小说不存在
+            ValueError: 如果小说不存在或章节号不连续
         """
         novel = self.novel_repository.get_by_id(NovelId(novel_id))
 
         if novel is None:
             raise ValueError(f"Novel not found: {novel_id}")
+
+        # 查询数据库中实际的章节数
+        existing_chapters = self.chapter_repository.list_by_novel(NovelId(novel_id))
+        expected_number = len(existing_chapters) + 1
+
+        # 验证章节号是否连续
+        if number != expected_number:
+            raise ValueError(f"Chapter number must be {expected_number}, got {number}")
 
         chapter = Chapter(
             id=chapter_id,
@@ -136,9 +149,57 @@ class NovelService:
             content=content
         )
 
-        novel.add_chapter(chapter)
-        self.novel_repository.save(novel)
+        # 直接保存章节，不通过Novel实体
+        self.chapter_repository.save(chapter)
 
+        # 同步创建 StoryNode 章节节点，并关联到当前活跃的幕
+        if self.story_node_repository:
+            try:
+                # 查找当前活跃的幕（最新的幕）
+                tree = self.story_node_repository.get_tree(novel_id)
+                acts = [node for node in tree.nodes if node.node_type == NodeType.ACT]
+
+                if acts:
+                    # 获取最新的幕
+                    current_act = max(acts, key=lambda x: x.number)
+
+                    # 创建章节节点
+                    chapter_node = StoryNode(
+                        id=f"chapter-{novel_id}-{number}",
+                        novel_id=novel_id,
+                        node_type=NodeType.CHAPTER,
+                        number=number,
+                        title=title,
+                        description="",
+                        parent_id=current_act.id,  # 关联到当前幕
+                        order_index=len(tree.nodes),
+                        content=content,
+                        word_count=len(content),
+                        status="draft",
+                        created_at=datetime.now(),
+                        updated_at=datetime.now()
+                    )
+
+                    self.story_node_repository.save(chapter_node)
+
+                    # 更新幕的章节范围
+                    children = self.story_node_repository.get_children(current_act.id, novel_id)
+                    chapter_nodes = [node for node in children if node.node_type == NodeType.CHAPTER]
+                    if chapter_nodes:
+                        chapter_numbers = [node.number for node in chapter_nodes]
+                        current_act.chapter_start = min(chapter_numbers)
+                        current_act.chapter_end = max(chapter_numbers)
+                        current_act.chapter_count = len(chapter_numbers)
+                        self.story_node_repository.save(current_act)
+
+            except Exception as e:
+                # 如果同步失败，不影响章节创建
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Failed to sync chapter to story structure: {e}")
+
+        # 重新加载Novel以返回最新状态
+        novel = self.novel_repository.get_by_id(NovelId(novel_id))
         return NovelDTO.from_domain(novel)
 
     def update_novel_stage(self, novel_id: str, stage: str) -> NovelDTO:

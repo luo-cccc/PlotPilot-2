@@ -41,7 +41,17 @@ def get_structure_ai_service() -> StoryStructureAIService:
     """获取叙事结构 AI 服务"""
     db_path = str(DATA_DIR / "aitext.db")
     repository = StoryNodeRepository(db_path)
-    return StoryStructureAIService(repository)
+
+    # 获取 Bible 服务
+    from infrastructure.persistence.repositories.file_bible_repository import FileBibleRepository
+    from infrastructure.persistence.storage.file_storage import FileStorage
+    from application.services.bible_service import BibleService
+
+    storage = FileStorage(DATA_DIR)
+    bible_repository = FileBibleRepository(storage)
+    bible_service = BibleService(bible_repository)
+
+    return StoryStructureAIService(repository, llm_service=None, bible_service=bible_service)
 
 
 # Request/Response Models

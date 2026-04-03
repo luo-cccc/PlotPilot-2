@@ -9,7 +9,10 @@ from pydantic import BaseModel
 from application.services.story_structure_service import StoryStructureService
 from application.services.story_structure_ai_service import StoryStructureAIService
 from infrastructure.persistence.database.story_node_repository import StoryNodeRepository
+from infrastructure.ai.providers.anthropic_provider import AnthropicProvider
+from infrastructure.ai.config.settings import Settings
 from application.paths import DATA_DIR
+import os
 
 
 router = APIRouter(tags=["story-structure"])
@@ -26,7 +29,31 @@ def get_ai_service() -> StoryStructureAIService:
     """获取 AI 服务实例"""
     db_path = str(DATA_DIR / "aitext.db")
     repository = StoryNodeRepository(db_path)
-    return StoryStructureAIService(repository)
+
+    # 获取 LLM 服务
+    llm_service = None
+    api_key = os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_AUTH_TOKEN")
+    if api_key:
+        settings = Settings(
+            api_key=api_key.strip(),
+            base_url=os.getenv("ANTHROPIC_BASE_URL")
+        )
+        try:
+            llm_service = AnthropicProvider(settings)
+        except Exception as e:
+            # 如果初始化失败，服务将降级使用默认规则
+            pass
+
+    # 获取 Bible 服务
+    from infrastructure.persistence.repositories.file_bible_repository import FileBibleRepository
+    from infrastructure.persistence.storage.file_storage import FileStorage
+    from application.services.bible_service import BibleService
+
+    storage = FileStorage(DATA_DIR)
+    bible_repository = FileBibleRepository(storage)
+    bible_service = BibleService(bible_repository)
+
+    return StoryStructureAIService(repository, llm_service, bible_service)
 
 
 class CreateNodeRequest(BaseModel):
@@ -187,9 +214,33 @@ async def initialize_structure(
     novel_id: str,
     ai_service: StoryStructureAIService = Depends(get_ai_service)
 ):
-    """初始化叙事结构（AI 生成第一幕）
+    """【已废弃】初始化叙事结构（AI 生成第一幕）
 
-    首次进入工作台时调用，AI 自动生成第一幕的结构和大纲
+    请使用 /novels/{novel_id}/structure/plan 接口
+    """
+    try:
+        result = await ai_service.initialize_first_act(novel_id)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/novels/{novel_id}/structure/plan")
+async def plan_structure(
+    novel_id: str,
+    ai_service: StoryStructureAIService = Depends(get_ai_service)
+):
+    """规划叙事结构（用户手动触发）
+
+    用户确认公约后，手动触发生成章节大纲和幕结构。
+    这是一个手动操作，不会在创建小说时自动执行。
+
+    Args:
+        novel_id: 小说 ID
+        ai_service: AI 服务
+
+    Returns:
+        生成的结构信息
     """
     try:
         result = await ai_service.initialize_first_act(novel_id)

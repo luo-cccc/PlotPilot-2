@@ -14,12 +14,12 @@ from infrastructure.persistence.database.connection import get_database
 from infrastructure.persistence.database.sqlite_novel_repository import SqliteNovelRepository
 from infrastructure.persistence.database.sqlite_chapter_repository import SqliteChapterRepository
 from infrastructure.persistence.database.sqlite_knowledge_repository import SqliteKnowledgeRepository
+from infrastructure.persistence.database.story_node_repository import StoryNodeRepository
 from infrastructure.persistence.repositories.file_novel_repository import FileNovelRepository
 from infrastructure.persistence.repositories.file_chapter_repository import FileChapterRepository
 from infrastructure.persistence.repositories.file_bible_repository import FileBibleRepository
 from infrastructure.persistence.repositories.file_cast_repository import FileCastRepository
 from infrastructure.persistence.repositories.file_knowledge_repository import FileKnowledgeRepository
-from infrastructure.persistence.repositories.file_chat_repository import FileChatRepository
 from infrastructure.persistence.repositories.file_storyline_repository import FileStorylineRepository
 from infrastructure.persistence.repositories.file_plot_arc_repository import FilePlotArcRepository
 from infrastructure.persistence.repositories.file_foreshadowing_repository import FileForeshadowingRepository
@@ -30,9 +30,7 @@ from application.services.novel_service import NovelService
 from application.services.chapter_service import ChapterService
 from application.services.bible_service import BibleService
 from application.services.cast_service import CastService
-from application.services.ai_generation_service import AIGenerationService
 from application.services.knowledge_service import KnowledgeService
-from application.services.chat_service import ChatService
 from application.services.context_builder import ContextBuilder
 from application.services.auto_bible_generator import AutoBibleGenerator
 from application.services.auto_knowledge_generator import AutoKnowledgeGenerator
@@ -136,15 +134,6 @@ def get_knowledge_repository() -> SqliteKnowledgeRepository:
     return SqliteKnowledgeRepository(get_database())
 
 
-def get_chat_repository() -> FileChatRepository:
-    """获取 Chat 仓储
-
-    Returns:
-        FileChatRepository 实例
-    """
-    return FileChatRepository(get_storage())
-
-
 def get_storyline_repository() -> FileStorylineRepository:
     """获取 Storyline 仓储
 
@@ -172,6 +161,16 @@ def get_foreshadowing_repository():
     return FileForeshadowingRepository(get_storage())
 
 
+def get_story_node_repository() -> StoryNodeRepository:
+    """获取 StoryNode 仓储
+
+    Returns:
+        StoryNodeRepository 实例
+    """
+    db_path = str(DATA_DIR / "aitext.db")
+    return StoryNodeRepository(db_path)
+
+
 # Service 依赖
 def get_novel_service() -> NovelService:
     """获取 Novel 服务
@@ -179,7 +178,11 @@ def get_novel_service() -> NovelService:
     Returns:
         NovelService 实例
     """
-    return NovelService(get_novel_repository(), get_chapter_repository())
+    return NovelService(
+        get_novel_repository(),
+        get_chapter_repository(),
+        get_story_node_repository()
+    )
 
 
 def get_chapter_service() -> ChapterService:
@@ -217,22 +220,6 @@ def get_cast_service() -> CastService:
     return CastService(storage_root)
 
 
-def get_ai_generation_service() -> AIGenerationService:
-    """获取 AI 生成服务
-
-    Returns:
-        AIGenerationService 实例
-    """
-    settings = _anthropic_settings(require_key=True)
-    llm_service = AnthropicProvider(settings)
-
-    return AIGenerationService(
-        llm_service,
-        get_novel_repository(),
-        get_bible_repository()
-    )
-
-
 def get_knowledge_service() -> KnowledgeService:
     """获取 Knowledge 服务
 
@@ -240,36 +227,6 @@ def get_knowledge_service() -> KnowledgeService:
         KnowledgeService 实例
     """
     return KnowledgeService(get_knowledge_repository())
-
-
-def get_chat_service() -> ChatService:
-    """获取 Chat 服务
-
-    读取消息等不依赖 LLM；未配置 ANTHROPIC_API_KEY 时仍可拉取历史，发送/流式时再报错。
-
-    Returns:
-        ChatService 实例
-    """
-    settings = _anthropic_settings(require_key=False)
-    llm_service = None
-    if settings:
-        try:
-            llm_service = AnthropicProvider(settings)
-        except Exception as e:
-            logger.warning(
-                "Anthropic 客户端初始化失败，聊天仅可读取历史：%s",
-                e,
-                exc_info=True,
-            )
-
-    return ChatService(
-        get_chat_repository(),
-        llm_service,
-        get_novel_repository(),
-        get_bible_repository(),
-        get_cast_repository(),
-        get_knowledge_repository()
-    )
 
 
 def get_storyline_manager() -> StorylineManager:
