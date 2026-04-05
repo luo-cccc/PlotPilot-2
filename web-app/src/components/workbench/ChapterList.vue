@@ -22,7 +22,7 @@
     <n-scrollbar class="sidebar-scroll">
       <!-- 平铺视图：仅显示章节列表 -->
       <div v-if="viewMode === 'flat'">
-        <div v-if="!chapters.length" class="sidebar-empty">暂无章节，请先在底部执行「宏观结构规划」创建章节大纲</div>
+        <div v-if="!chapters.length" class="sidebar-empty">暂无章节，请先在底部执行「启动结构规划」创建章节大纲</div>
         <n-list v-else hoverable clickable>
           <n-list-item
             v-for="ch in chapters"
@@ -52,19 +52,21 @@
           :current-chapter-id="currentChapterId"
           @select-chapter="handleChapterClick"
           @plan-act="(id, title) => emit('planAct', id, title)"
+          @open-plan-modal="showMacroPlan = true"
+          @tree-loaded="(hasData) => hasStructure = hasData"
         />
       </div>
     </n-scrollbar>
 
-    <!-- 底部操作区 -->
-    <div class="sidebar-foot">
+    <!-- 底部操作区：仅在平铺视图或树形视图有数据时显示 -->
+    <div v-if="viewMode === 'flat' || (viewMode === 'tree' && hasStructure)" class="sidebar-foot">
       <n-button
         size="small"
         secondary
         block
         @click="showMacroPlan = true"
       >
-        📐 宏观结构规划
+        🎯 启动结构规划
       </n-button>
     </div>
   </aside>
@@ -113,6 +115,7 @@ const viewModeOptions = [
 ]
 
 const showMacroPlan = ref(false)
+const hasStructure = ref(true) // 默认假设有结构，由 StoryStructureTree 更新
 
 const storyTreeRef = ref<ComponentPublicInstance<{ loadTree: () => Promise<void> }> | null>(null)
 

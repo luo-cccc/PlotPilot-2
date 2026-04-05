@@ -20,8 +20,8 @@
       class="structure-empty"
     >
       <template #extra>
-        <n-button type="primary" @click="initializeStructure">
-          AI 初始规划
+        <n-button type="primary" @click="emit('openPlanModal')">
+          🎯 启动结构规划
         </n-button>
       </template>
     </n-empty>
@@ -68,9 +68,8 @@
 
 <script setup lang="ts">
 import { ref, computed, h, onMounted, watch } from 'vue'
-import { NTree, NEmpty, NSpin, NTag, NButton, NDropdown, NModal, NInput, useMessage, useDialog } from 'naive-ui'
+import { NTree, NEmpty, NSpin, NTag, NButton, NDropdown, NModal, NInput, useMessage } from 'naive-ui'
 import { structureApi, type StoryNode } from '@/api/structure'
-import { workflowApi } from '@/api/workflow'
 import { chapterApi } from '@/api/chapter'
 
 const props = defineProps<{
@@ -81,10 +80,11 @@ const props = defineProps<{
 const emit = defineEmits<{
   selectChapter: [id: number, title: string]
   planAct: [actId: string, actTitle: string]
+  openPlanModal: []
+  treeLoaded: [hasData: boolean]
 }>()
 
 const message = useMessage()
-const dialog = useDialog()
 
 const loading = ref(false)
 const treeData = ref<StoryNode[]>([])
@@ -190,39 +190,15 @@ const loadTree = async () => {
     const res = await structureApi.getTree(props.slug)
     const nodes = res.tree?.nodes || []
     treeData.value = nodes.length > 0 ? nodes.map(convertToTreeNode) : []
+
+    // 通知父组件树是否有数据
+    emit('treeLoaded', treeData.value.length > 0)
   } catch (e: any) {
     message.error(e?.response?.data?.detail || '加载结构失败')
+    emit('treeLoaded', false)
   } finally {
     loading.value = false
   }
-}
-
-const initializeStructure = async () => {
-  dialog.warning({
-    title: 'AI 初始规划',
-    content: '将使用 AI 生成初始 Bible（世界设定）和章节大纲。此操作可能需要 1-2 分钟，确认继续？',
-    positiveText: '确认',
-    negativeText: '取消',
-    onPositiveClick: () => {
-      loading.value = true
-      void (async () => {
-        try {
-          const res = await workflowApi.planNovel(props.slug, 'initial', false)
-          if (res.success) {
-            message.success('规划完成，正在加载叙事结构...')
-            await loadTree()
-          } else {
-            message.warning(res.message || '规划失败')
-          }
-        } catch (e: any) {
-          message.error(e?.response?.data?.detail || '规划失败')
-        } finally {
-          loading.value = false
-        }
-      })()
-      return true
-    },
-  })
 }
 
 /** 从结构树章节节点解析「全书章节号」（与 GET .../chapters/{chapter_number} 一致） */
