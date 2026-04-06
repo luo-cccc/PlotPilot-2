@@ -1,0 +1,164 @@
+"""章节保存后的统一管线：叙事落库、向量检索、文风、图谱推断与后台抽取。
+
+供 HTTP 保存、托管连写、自动驾驶审计复用，避免：
+- 索引用正文截断 vs 叙事层用 LLM 总结 两套逻辑；
+- 文风既入队 VOICE_ANALYSIS 又同步 score_chapter 重复计算。
+
+顺序（重要产物均落库）：
+1. 分章叙事同步：StoryKnowledge 摘要/节拍 + 向量索引（chapter_narrative_sync）
+2. 文风评分：写入 chapter_style_scores（仅一次，不再入队 VOICE_ANALYSIS）
+3. 结构树知识图谱推断：KnowledgeGraphService.infer_from_chapter
+4. 后台：LLM 三元组 + 伏笔抽取（GRAPH_UPDATE / FORESHADOW_EXTRACT，不含 VOICE）
+"""
+from __future__ import annotations
+
+import logging
+from typing import Any, Dict, Optional, TYPE_CHECKING
+
+from domain.ai.services.llm_service import LLMService
+from domain.novel.value_objects.chapter_id import ChapterId
+from domain.novel.value_objects.novel_id import NovelId
+
+if TYPE_CHECKING:
+    from application.engine.services.background_task_service import BackgroundTaskService
+    from application.world.services.knowledge_service import KnowledgeService
+
+logger = logging.getLogger(__name__)
+
+
+async def infer_kg_from_chapter(novel_id: str, chapter_number: int) -> None:
+    """结构树章节节点 → 知识图谱增量推断（与 HTTP 原 _try_infer_kg_chapter 一致）。"""
+    try:
+        from application.paths import get_db_path
+        from infrastructure.persistence.database.connection import get_database
+        from infrastructure.persistence.database.sqlite_knowledge_repository import SqliteKnowledgeRepository
+        from infrastructure.persistence.database.triple_repository import TripleRepository
+        from infrastructure.persistence.database.chapter_element_repository import ChapterElementRepository
+        from infrastructure.persistence.database.story_node_repository import StoryNodeRepository
+        from application.world.services.knowledge_graph_service import KnowledgeGraphService
+
+        db_path = get_db_path()
+        kr = SqliteKnowledgeRepository(get_database())
+        story_node_id = kr.find_story_node_id_for_chapter_number(novel_id, chapter_number)
+        if not story_node_id:
+            logger.debug("KG 推断跳过：章节 %d 无故事节点 novel=%s", chapter_number, novel_id)
+            return
+
+        kg_service = KnowledgeGraphService(
+            TripleRepository(),
+            ChapterElementRepository(db_path),
+            StoryNodeRepository(db_path),
+        )
+        triples = await kg_service.infer_from_chapter(story_node_id)
+        logger.debug("KG 推断完成 novel=%s ch=%d 新三元组=%d", novel_id, chapter_number, len(triples))
+    except Exception as e:
+        logger.warning("KG 推断失败 novel=%s ch=%d: %s", novel_id, chapter_number, e)
+
+
+class ChapterAftermathPipeline:
+    """章节保存后分析与落库的统一入口。"""
+
+    def __init__(
+        self,
+        knowledge_service: "KnowledgeService",
+        chapter_indexing_service: Any,
+        llm_service: LLMService,
+        voice_drift_service: Any = None,
+        background_task_service: Optional["BackgroundTaskService"] = None,
+    ) -> None:
+        self._knowledge = knowledge_service
+        self._indexing = chapter_indexing_service
+        self._llm = llm_service
+        self._voice = voice_drift_service
+        self._bg = background_task_service
+
+    async def run_after_chapter_saved(
+        self,
+        novel_id: str,
+        chapter_number: int,
+        content: str,
+        *,
+        novel_id_vo: Optional[NovelId] = None,
+        chapter_id_vo: Optional[ChapterId] = None,
+    ) -> Dict[str, Any]:
+        """保存正文后执行完整管线。返回文风结果供托管/审计门控使用。
+
+        novel_id_vo / chapter_id_vo 若提供则入队 GRAPH + FORESHADOW；文风不再入队。
+        """
+        out: Dict[str, Any] = {
+            "drift_alert": False,
+            "similarity_score": None,
+            "narrative_sync_ok": False,
+        }
+
+        if not content or not str(content).strip():
+            logger.debug("aftermath 跳过：正文为空 novel=%s ch=%s", novel_id, chapter_number)
+            return out
+
+        # 1) 叙事 + 向量（与 chapter_narrative_sync 一致）
+        try:
+            from application.world.services.chapter_narrative_sync import (
+                sync_chapter_narrative_after_save,
+            )
+
+            await sync_chapter_narrative_after_save(
+                novel_id,
+                chapter_number,
+                content,
+                self._knowledge,
+                self._indexing,
+                self._llm,
+            )
+            out["narrative_sync_ok"] = True
+        except Exception as e:
+            logger.warning(
+                "叙事同步/向量失败 novel=%s ch=%s: %s", novel_id, chapter_number, e
+            )
+
+        # 2) 文风（落库 chapter_style_scores）
+        if self._voice:
+            try:
+                vr = self._voice.score_chapter(
+                    novel_id=novel_id,
+                    chapter_number=chapter_number,
+                    content=content,
+                )
+                out["drift_alert"] = bool(vr.get("drift_alert", False))
+                out["similarity_score"] = vr.get("similarity_score")
+                logger.debug(
+                    "文风评分完成 novel=%s ch=%s drift=%s",
+                    novel_id,
+                    chapter_number,
+                    out["drift_alert"],
+                )
+            except Exception as e:
+                logger.warning("文风评分失败 novel=%s ch=%s: %s", novel_id, chapter_number, e)
+
+        # 3) 结构树 KG 推断
+        await infer_kg_from_chapter(novel_id, chapter_number)
+
+        # 4) 后台：三元组 + 伏笔（不复用 VOICE）
+        nid = novel_id_vo or NovelId(novel_id)
+        cid = chapter_id_vo
+        if self._bg and cid is not None:
+            from application.engine.services.background_task_service import TaskType
+
+            payload = {"content": content, "chapter_number": chapter_number}
+            for task_type in (TaskType.GRAPH_UPDATE, TaskType.FORESHADOW_EXTRACT):
+                try:
+                    self._bg.submit_task(
+                        task_type=task_type,
+                        novel_id=nid,
+                        chapter_id=cid,
+                        payload=payload,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "后台任务入队失败 %s novel=%s ch=%s: %s",
+                        task_type.value,
+                        novel_id,
+                        chapter_number,
+                        e,
+                    )
+
+        return out
