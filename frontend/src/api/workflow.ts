@@ -98,10 +98,16 @@ export interface GenerateChapterWorkflowResponse {
   ghost_annotations?: unknown[]
 }
 
+export interface ChunkStats {
+  chars: number
+  chunks: number
+  estimated_tokens: number
+}
+
 export type GenerateChapterStreamEvent =
   | { type: 'phase'; phase: 'planning' | 'context' | 'llm' | 'post' }
-  | { type: 'chunk'; text: string }
-  | { type: 'done'; content: string; consistency_report: ConsistencyReportDTO; token_count: number; style_warnings?: StyleWarning[]; ghost_annotations?: unknown[] }
+  | { type: 'chunk'; text: string; stats: ChunkStats }
+  | { type: 'done'; content: string; consistency_report: ConsistencyReportDTO; token_count: number; output_tokens: number; total_tokens: number; chars: number; style_warnings?: StyleWarning[]; ghost_annotations?: unknown[] }
   | { type: 'error'; message: string }
 
 function parseSseDataLine(line: string): unknown | null {
@@ -123,7 +129,7 @@ export async function consumeGenerateChapterStream(
   handlers: {
     onEvent?: (ev: GenerateChapterStreamEvent) => void
     onPhase?: (phase: string) => void
-    onChunk?: (text: string) => void
+    onChunk?: (text: string, stats?: ChunkStats) => void
     onDone?: (result: GenerateChapterWorkflowResponse) => void
     onError?: (message: string) => void
     signal?: AbortSignal
@@ -164,9 +170,10 @@ export async function consumeGenerateChapterStream(
             handlers.onPhase?.(ph)
           } else if (typ === 'chunk') {
             const text = String(o.text ?? '')
-            const ev: GenerateChapterStreamEvent = { type: 'chunk', text }
+            const stats = o.stats as ChunkStats | undefined
+            const ev: GenerateChapterStreamEvent = { type: 'chunk', text, stats: stats || { chars: 0, chunks: 0, estimated_tokens: 0 } }
             handlers.onEvent?.(ev)
-            handlers.onChunk?.(text)
+            handlers.onChunk?.(text, stats)
           } else if (typ === 'done') {
             const rawReport = o.consistency_report
             const consistency_report: ConsistencyReportDTO =
@@ -184,7 +191,13 @@ export async function consumeGenerateChapterStream(
             if (o.ghost_annotations != null) {
               result.ghost_annotations = o.ghost_annotations as unknown[]
             }
-            const ev: GenerateChapterStreamEvent = { type: 'done', ...result }
+            const ev: GenerateChapterStreamEvent = {
+              type: 'done',
+              ...result,
+              output_tokens: Number(o.output_tokens ?? 0),
+              total_tokens: Number(o.total_tokens ?? 0),
+              chars: Number(o.chars ?? 0),
+            }
             handlers.onEvent?.(ev)
             handlers.onDone?.(result)
             return

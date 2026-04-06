@@ -306,10 +306,22 @@ class AutoNovelGenerationWorkflow:
             logger.info(f"  → 发送流式请求到 LLM")
             parts: list[str] = []
             chunk_count = 0
+            total_chars = 0
             async for piece in self.llm_service.stream_generate(prompt, config):
                 parts.append(piece)
                 chunk_count += 1
-                yield {"type": "chunk", "text": piece}
+                total_chars += len(piece)
+                # 增强事件：包含累计字数和预估 token（中文约 1.5 字/token，英文约 4 字/token）
+                estimated_tokens = int(total_chars / 1.5)  # 简化估算
+                yield {
+                    "type": "chunk", 
+                    "text": piece,
+                    "stats": {
+                        "chars": total_chars,
+                        "chunks": chunk_count,
+                        "estimated_tokens": estimated_tokens,
+                    }
+                }
 
             content = "".join(parts)
             logger.info(f"  ✓ LLM 流式响应完成: {chunk_count} 个块, {len(content)} 字符")
@@ -331,8 +343,12 @@ class AutoNovelGenerationWorkflow:
                 logger.info(f"  ✓ 俗套扫描: 检测到 {len(style_warnings)} 个俗套句式")
 
             token_count = context_tokens
+            output_tokens = int(len(content) / 1.5)  # 预估输出 token
+            total_tokens = token_count + output_tokens
             logger.info(f"========================================")
             logger.info(f"流式章节生成完成: 小说={novel_id}, 章节={chapter_number}")
+            logger.info(f"  输出: {len(content)} 字符, 约 {output_tokens} tokens")
+            logger.info(f"  总计: 约 {total_tokens} tokens (上下文 {token_count} + 输出 {output_tokens})")
             logger.info(f"========================================")
 
             yield {
@@ -340,6 +356,9 @@ class AutoNovelGenerationWorkflow:
                 "content": content,
                 "consistency_report": _consistency_report_to_dict(consistency_report),
                 "token_count": token_count,
+                "output_tokens": output_tokens,
+                "total_tokens": total_tokens,
+                "chars": len(content),
                 "ghost_annotations": [ann.to_dict() for ann in ghost_annotations],
                 "style_warnings": [
                     {

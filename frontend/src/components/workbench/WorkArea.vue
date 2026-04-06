@@ -346,7 +346,12 @@
                 :height="8"
                 indicator-placement="inside"
               />
-              <n-text depth="3" style="font-size: 12px">{{ streamPhaseLabel || '准备中…' }}</n-text>
+              <n-space justify="space-between" style="width: 100%">
+                <n-text depth="3" style="font-size: 12px">{{ streamPhaseLabel || '准备中…' }}</n-text>
+                <n-text depth="3" style="font-size: 12px">
+                  {{ streamStats.chars }} 字 · ~{{ streamStats.estimated_tokens }} tokens
+                </n-text>
+              </n-space>
             </n-space>
             <n-scrollbar style="max-height: 500px">
               <n-input
@@ -515,6 +520,7 @@ const blurSceneCache = ref<Record<string, unknown> | undefined>(undefined)
 const outlineBlurAnalyzing = ref(false)
 const streamPhaseLabel = ref('')
 const streamProgressPct = ref(0)
+const streamStats = ref({ chars: 0, estimated_tokens: 0, chunks: 0 })
 
 // Autopilot 状态
 const autopilotStatus = ref<any>(null)
@@ -890,6 +896,7 @@ const handleStartGenerate = async () => {
   lastQcChapterNumber.value = null
   streamPhaseLabel.value = '连接中…'
   streamProgressPct.value = 8
+  streamStats.value = { chars: 0, estimated_tokens: 0, chunks: 0 }
 
   const ctrl = new AbortController()
   generateAbortCtrl.value = ctrl
@@ -924,8 +931,11 @@ const handleStartGenerate = async () => {
           streamPhaseLabel.value = streamPhaseToLabel(phase)
           streamProgressPct.value = streamPhaseToProgress(phase)
         },
-        onChunk: (text) => {
+        onChunk: (text, stats) => {
           generatedContent.value += text
+          if (stats) {
+            streamStats.value = stats
+          }
         },
         onDone: (result) => {
           lastWorkflowResult.value = result
