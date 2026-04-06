@@ -21,13 +21,14 @@ class SqliteChapterRepository(ChapterRepository):
     def save(self, chapter: Chapter) -> None:
         """保存章节"""
         sql = """
-            INSERT INTO chapters (id, novel_id, number, title, content, outline, status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO chapters (id, novel_id, number, title, content, outline, status, tension_score, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 content = excluded.content,
                 outline = excluded.outline,
                 status = excluded.status,
+                tension_score = excluded.tension_score,
                 updated_at = excluded.updated_at
         """
         now = datetime.utcnow().isoformat()
@@ -42,6 +43,7 @@ class SqliteChapterRepository(ChapterRepository):
             chapter.content,
             chapter.outline,  # 使用实体的 outline 字段
             status,
+            chapter.tension_score,
             now,
             now
         ))
@@ -88,6 +90,21 @@ class SqliteChapterRepository(ChapterRepository):
         row = self.db.fetch_one(sql, (chapter_id.value,))
         return row is not None
 
+    def update_tension_score(self, novel_id: str, chapter_number: int, score: float) -> None:
+        """更新章节张力分数"""
+        if not 0 <= score <= 100:
+            raise ValueError(f"Tension score must be between 0 and 100, got {score}")
+
+        sql = """
+            UPDATE chapters
+            SET tension_score = ?, updated_at = ?
+            WHERE novel_id = ? AND number = ?
+        """
+        now = datetime.utcnow().isoformat()
+        self.db.execute(sql, (score, now, novel_id, chapter_number))
+        self.db.get_connection().commit()
+        logger.info(f"Updated tension score for novel {novel_id} chapter {chapter_number}: {score}")
+
     def _row_to_chapter(self, row: dict) -> Chapter:
         """将数据库行转换为 Chapter 实体"""
         from domain.novel.value_objects.novel_id import NovelId
@@ -104,5 +121,6 @@ class SqliteChapterRepository(ChapterRepository):
             title=row['title'],
             content=row['content'],
             outline=row.get('outline', ''),
-            status=status
+            status=status,
+            tension_score=row.get('tension_score', 50.0)
         )

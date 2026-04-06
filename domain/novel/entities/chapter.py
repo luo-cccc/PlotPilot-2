@@ -25,7 +25,8 @@ class Chapter(BaseEntity):
         title: str,
         content: str = "",
         outline: str = "",
-        status: ChapterStatus = ChapterStatus.DRAFT
+        status: ChapterStatus = ChapterStatus.DRAFT,
+        tension_score: float = 50.0
     ):
         super().__init__(id)
         self.novel_id = novel_id
@@ -34,6 +35,7 @@ class Chapter(BaseEntity):
         self._content_text = content  # 直接存储文本，允许空内容
         self.outline = outline  # 章节大纲
         self.status = status
+        self.tension_score = tension_score  # 章节张力值 0-100
 
     @property
     def content(self) -> str:
@@ -49,4 +51,11 @@ class Chapter(BaseEntity):
     def update_content(self, content: str) -> None:
         """更新内容（允许空内容用于草稿）"""
         self._content_text = content
+        self.updated_at = datetime.utcnow()
+
+    def update_tension_score(self, score: float) -> None:
+        """更新张力分数（0-100）"""
+        if not 0 <= score <= 100:
+            raise ValueError(f"Tension score must be between 0 and 100, got {score}")
+        self.tension_score = score
         self.updated_at = datetime.utcnow()

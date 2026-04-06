@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS chapters (
     content TEXT,
     outline TEXT,
     status TEXT DEFAULT 'draft',
+    tension_score REAL DEFAULT 50.0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (novel_id) REFERENCES novels(id) ON DELETE CASCADE,
