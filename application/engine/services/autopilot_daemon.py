@@ -853,16 +853,44 @@ class AutopilotDaemon:
             logger.warning(f"[{novel.novel_id}] 自动触发宏观诊断失败: {e}")
 
     async def _run_macro_diagnosis_background(self, novel_id: str) -> None:
-        """后台执行宏观诊断"""
+        """后台执行宏观诊断
+        
+        流程：
+        1. 初始化 MacroDiagnosisService（惰性加载）
+        2. 执行全人设扫描
+        3. 结果自动存储到 macro_diagnosis_results 表
+        """
         try:
-            from application.blueprint.services.continuous_planning_service import ContinuousPlanningService
-
-            # 这里可以调用宏观诊断的逻辑
-            # 目前只是记录日志，后续可以扩展为实际诊断
-            logger.info(f"[{novel_id}] 宏观诊断后台任务已启动")
+            from infrastructure.persistence.database.connection import get_database
+            from infrastructure.persistence.database.sqlite_narrative_event_repository import SqliteNarrativeEventRepository
+            from application.audit.services.macro_refactor_scanner import MacroRefactorScanner
+            from application.audit.services.macro_diagnosis_service import MacroDiagnosisService
+            
+            logger.info(f"[{novel_id}] 📊 宏观诊断后台任务已启动")
+            
+            # 初始化服务
+            db = get_database()
+            narrative_event_repo = SqliteNarrativeEventRepository(db)
+            scanner = MacroRefactorScanner(narrative_event_repo)
+            diagnosis_service = MacroDiagnosisService(db, scanner)
+            
+            # 执行全人设扫描（使用内置规则）
+            result = diagnosis_service.run_full_diagnosis(
+                novel_id=novel_id,
+                trigger_reason=f"自动触发（检查点）",
+                traits=None  # 使用默认的内置人设标签
+            )
+            
+            if result.status == "completed":
+                logger.info(
+                    f"[{novel_id}] ✅ 宏观诊断完成："
+                    f"扫描 {result.trait} 人设，发现 {len(result.breakpoints)} 个冲突断点"
+                )
+            else:
+                logger.warning(f"[{novel_id}] ⚠️ 宏观诊断失败：{result.error_message}")
 
         except Exception as e:
-            logger.warning(f"[{novel_id}] 宏观诊断后台任务失败: {e}")
+            logger.warning(f"[{novel_id}] 宏观诊断后台任务失败: {e}", exc_info=True)
 
     async def _score_tension(self, content: str) -> int:
         """给章节打张力分（1-10），用于判断是否插入缓冲章"""
