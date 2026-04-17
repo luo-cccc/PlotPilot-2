@@ -24,9 +24,6 @@
       class="settings-tabs"
       :tabs-padding="8"
     >
-      <n-tab-pane name="novel-settings" tab="小说设置">
-        <NovelSettingsPanel :slug="slug" @saved="emit('novelUpdated')" />
-      </n-tab-pane>
       <n-tab-pane name="bible" tab="作品设定">
         <BiblePanel :key="bibleKey" :slug="slug" />
       </n-tab-pane>
@@ -80,7 +77,6 @@
 <script setup lang="ts">
 import { defineAsyncComponent, ref, watch } from 'vue'
 
-const NovelSettingsPanel = defineAsyncComponent(() => import('./NovelSettingsPanel.vue'))
 const BiblePanel = defineAsyncComponent(() => import('../panels/BiblePanel.vue'))
 const KnowledgePanel = defineAsyncComponent(() => import('../knowledge/KnowledgePanel.vue'))
 const WorldbuildingPanel = defineAsyncComponent(() => import('./WorldbuildingPanel.vue'))
@@ -91,7 +87,7 @@ const MacroRefactorPanel = defineAsyncComponent(() => import('./MacroRefactorPan
 const SandboxDialoguePanel = defineAsyncComponent(() => import('./SandboxDialoguePanel.vue'))
 
 /** 剧本基建组 */
-const FOUNDATION_TABS = new Set(['novel-settings', 'bible', 'worldbuilding', 'knowledge'])
+const FOUNDATION_TABS = new Set(['bible', 'worldbuilding', 'knowledge'])
 /** 叙事脉络组（时间轴+快照已并入「全息编年史」；旧 tab id 见 LEGACY_NARRATIVE） */
 const NARRATIVE_TABS = new Set(['storyline-arc', 'chronicles', 'macro-refactor'])
 const LEGACY_NARRATIVE = new Set(['storylines', 'plot-arc', 'timeline', 'snapshots'])
@@ -137,13 +133,12 @@ const props = withDefaults(defineProps<Props>(), {
 
 const emit = defineEmits<{
   'update:currentPanel': [panel: string]
-  novelUpdated: []
 }>()
 
 const activeGroup = ref<'foundation' | 'narrative' | 'tactical'>(resolveGroup(props.currentPanel))
 
 const foundationTab = ref(
-  FOUNDATION_TABS.has(props.currentPanel ?? '') ? props.currentPanel! : 'novel-settings'
+  FOUNDATION_TABS.has(props.currentPanel ?? '') ? props.currentPanel! : 'bible'
 )
 const narrativeTab = ref(normalizeNarrativeTab(props.currentPanel))
 function normalizeTacticalTab(panel: string | undefined): string {
@@ -173,7 +168,7 @@ watch(() => props.currentPanel, (newVal) => {
     foundationTab.value = newVal
   } else {
     activeGroup.value = 'foundation'
-    foundationTab.value = 'novel-settings'
+    foundationTab.value = 'bible'
   }
 })
 

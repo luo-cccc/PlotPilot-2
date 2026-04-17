@@ -42,7 +42,6 @@
                   :bible-key="biblePanelKey"
                   :current-chapter="currentChapter"
                   @update:current-panel="onSettingsPanelChange"
-                  @novel-updated="handleChapterUpdated"
                 />
               </template>
             </n-split>
