@@ -81,9 +81,9 @@ from interfaces.api.stats.repositories.sqlite_stats_repository_adapter import Sq
 from infrastructure.persistence.database.connection import get_database
 
 # 产品发布版本（与前端 / 安装包一致）
-APP_RELEASE_VERSION = "1.0.2"
-# 构建标识（与安装包/发布说明一致，便于对账）
-BACKEND_BUILD_ID = "build-20260209-1200-c4d2"
+APP_RELEASE_VERSION = "1.0.1"
+# 构建标识（每次进程启动唯一）
+BACKEND_BUILD_ID = datetime.now().strftime("%Y%m%d-%H%M%S")
 STARTUP_TIME = time.time()
 
 logger.info("=" * 80)
@@ -102,7 +102,7 @@ logger.info("=" * 80)
 # 创建 FastAPI 应用
 app = FastAPI(
     title="PlotPilot API",
-    version="1.0.2",
+    version="1.0.1",
     description="PlotPilot（墨枢）AI 小说创作平台 API",
     redirect_slashes=True,  # 自动将 /api/v1/novels 重定向到 /api/v1/novels/
 )
@@ -308,7 +308,12 @@ def _run_daemon_in_process(
         logger.info("✅ 守护进程：流式队列已注入")
     
     try:
-        from scripts.start_daemon import build_daemon
+        import sys
+        from pathlib import Path
+        _scripts_dir = str(Path(__file__).resolve().parents[1] / "scripts")
+        if _scripts_dir not in sys.path:
+            sys.path.insert(0, _scripts_dir)
+        from start_daemon import build_daemon
         daemon = build_daemon()
         logger.info("🚀 守护进程已启动（独立进程），开始轮询...")
         

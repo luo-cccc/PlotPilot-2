@@ -3,7 +3,7 @@
 整合所有子项目组件，实现完整的章节生成流程。
 """
 import logging
-from typing import Tuple, Dict, Any, AsyncIterator, Optional, List
+from typing import TYPE_CHECKING, Tuple, Dict, Any, AsyncIterator, Optional, List
 from application.engine.services.context_builder import ContextBuilder
 from application.analyst.services.state_extractor import StateExtractor
 from application.analyst.services.state_updater import StateUpdater
@@ -23,8 +23,10 @@ from domain.novel.value_objects.consistency_context import ConsistencyContext
 from domain.novel.value_objects.novel_id import NovelId
 from domain.ai.services.llm_service import LLMService, GenerationConfig
 from domain.ai.value_objects.prompt import Prompt
-from application.ai.llm_output_sanitize import strip_reasoning_artifacts
-from application.workflows.beat_continuation import format_prior_draft_for_prompt
+
+if TYPE_CHECKING:
+    from application.ai.llm_output_sanitize import strip_reasoning_artifacts
+    from application.workflows.beat_continuation import format_prior_draft_for_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -154,6 +156,24 @@ class AutoNovelGenerationWorkflow:
         self.conflict_detection_service = conflict_detection_service
         self.voice_fingerprint_service = voice_fingerprint_service
         self.cliche_scanner = cliche_scanner
+
+    async def _generate_with_strategy(
+        self, prompt: Prompt, config: GenerationConfig, stage: str
+    ) -> GenerationResult:
+        """按 stage 策略生成，如无策略则降级为单模型"""
+        if self.orchestrator:
+            variables = {
+                "novel_title": self._current_novel_id,
+                "chapter_number": str(self._current_chapter_number),
+            }
+            result = await self.orchestrator.execute(
+                novel_id=self._current_novel_id,
+                stage=stage,
+                base_prompt=prompt,
+                context_variables=variables,
+            )
+            return GenerationResult(content=result.content, usage=TokenUsage())
+        return await self.llm_service.generate(prompt, config)
 
     def prepare_chapter_generation(
         self,
@@ -378,7 +398,7 @@ class AutoNovelGenerationWorkflow:
                     chapter_draft_so_far=prior_draft,
                 )
                 
-                llm_result = await self.llm_service.generate(prompt, config)
+                llm_result = await self._generate_with_strategy(prompt, config, stage="beat_writing")
                 beat_content = llm_result.content
                 content_parts.append(beat_content)
             
@@ -395,7 +415,7 @@ class AutoNovelGenerationWorkflow:
                 voice_anchors=bundle.get("voice_anchors") or "",
             )
             logger.info(f"  → 发送请求到 LLM (max_tokens={config.max_tokens}, temperature={config.temperature})")
-            llm_result = await self.llm_service.generate(prompt, config)
+            llm_result = await self._generate_with_strategy(prompt, config, stage="writing")
             content = strip_reasoning_artifacts(llm_result.content or "")
             logger.info(f"  ✓ LLM 响应已接收: {len(content)} 字符")
         
@@ -641,7 +661,7 @@ class AutoNovelGenerationWorkflow:
                 ),
             )
             cfg = GenerationConfig(max_tokens=1024, temperature=0.7)
-            out = await self.llm_service.generate(outline_prompt, cfg)
+            out = await self._generate_with_strategy(outline_prompt, cfg, stage="macro_planning")
             text = strip_reasoning_artifacts((out.content or "").strip())
             if text:
                 return text

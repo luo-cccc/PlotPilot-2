@@ -1,6 +1,6 @@
 import { apiClient } from './config'
 
-export type LLMProtocol = 'openai' | 'anthropic' | 'gemini'
+export type LLMProtocol = 'openai' | 'anthropic' | 'gemini' | 'minimax'
 
 export interface LLMPreset {
   key: string
@@ -92,6 +92,16 @@ export const llmControlApi = {
 }
 
 // ========== 提示词广场 API (Prompt Plaza) ==========
+
+/** 角色推荐提示词 */
+export interface PromptSuggestion {
+  node_key: string
+  name: string
+  description: string
+  category: string
+  tags: string[]
+  relevance: number
+}
 
 /** 分类信息 */
 export interface PromptCategoryInfo {

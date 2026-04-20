@@ -67,7 +67,6 @@ class AutopilotDaemon:
         aftermath_pipeline: Optional[ChapterAftermathPipeline] = None,
         volume_summary_service=None,
         foreshadowing_repository=None,
-        knowledge_service=None,
     ):
         self.novel_repository = novel_repository
         self.llm_service = llm_service
@@ -83,8 +82,7 @@ class AutopilotDaemon:
         self.aftermath_pipeline = aftermath_pipeline
         self.volume_summary_service = volume_summary_service
         self.foreshadowing_repository = foreshadowing_repository
-        self.knowledge_service = knowledge_service
-        
+
         # 惰性初始化 VolumeSummaryService
         if not self.volume_summary_service and llm_service and story_node_repo:
             from application.blueprint.services.volume_summary_service import VolumeSummaryService
@@ -94,6 +92,64 @@ class AutopilotDaemon:
                 chapter_repository=chapter_repository,
                 foreshadowing_repository=foreshadowing_repository,
             )
+
+    async def _generate_with_strategy(
+        self, prompt, config, stage: str, novel_id: str
+    ):
+        """按 stage 策略生成，如无策略则降级为单模型"""
+        if self.orchestrator:
+            variables = {"novel_title": novel_id}
+            result = await self.orchestrator.execute(
+                novel_id=novel_id,
+                stage=stage,
+                base_prompt=prompt,
+                context_variables=variables,
+            )
+            # Return a minimal object with .content attribute
+            class _Result:
+                def __init__(self, content):
+                    self.content = content
+            return _Result(content=result.content)
+        return await self.llm_service.generate(prompt, config)
+
+    @staticmethod
+    def _safety_check(content: str) -> Dict[str, Any]:
+        """内容安全快速检查 — 内联 harness safety 层。
+
+        检测敏感内容模式，返回 {"passed": bool, "message": str, "issues": list}。
+        规则引擎零成本，不依赖 LLM。
+        """
+        import re
+
+        critical_patterns = [
+            (r"(?:详细|具体)描述.{0,30}(?:性暴力|强奸|虐待儿童|儿童色情)", "敏感内容：性暴力/虐待儿童"),
+            (r"(?:如何|步骤|教程).{0,30}(?:制造炸弹|制毒|恐怖袭击|武器)", "敏感内容：暴力/恐怖主义"),
+            (r"(?:煽动|号召).{0,30}(?:种族灭绝|大屠杀|清洗)", "敏感内容：仇恨言论"),
+            (r"(?:儿童|未成年人).{0,20}(?:色情|性交易|性剥削)", "敏感内容：儿童色情"),
+        ]
+        issues: List[str] = []
+        for pattern, desc in critical_patterns:
+            if re.search(pattern, content):
+                issues.append(desc)
+
+        if issues:
+            return {
+                "passed": False,
+                "message": "; ".join(issues),
+                "issues": issues,
+            }
+        return {"passed": True, "message": "通过", "issues": []}
+
+    def _log_safety_violation(
+        self, novel_id: str, chapter_number: int, issues: List[str]
+    ) -> None:
+        """记录安全违规到日志，供人工追溯。"""
+        logger.error(
+            "[SAFETY] novel=%s chapter=%d 内容安全拦截: %s",
+            novel_id,
+            chapter_number,
+            "; ".join(issues),
+        )
 
     def run_forever(self):
         """守护进程主循环（事务最小化原则）"""
@@ -391,6 +447,7 @@ class AutopilotDaemon:
             if not target_act:
                 logger.error(f"[{novel.novel_id}] 找不到第 {target_act_number} 幕，且动态生成失败")
                 novel.current_stage = NovelStage.WRITING
+                self._flush_novel(novel)
                 return
 
         # 检查该幕下是否已有章节节点（避免重复规划）
@@ -442,6 +499,7 @@ class AutopilotDaemon:
                 f"[{novel.novel_id}] 幕 {target_act_number} 仍无章节节点，下轮继续幕级规划"
             )
             novel.current_stage = NovelStage.ACT_PLANNING
+            self._flush_novel(novel)
             return
 
         # 仅在本轮「新落库」幕级章节规划时暂停审阅；用户确认后同幕已有节点则直接写作，避免反复弹审批
@@ -502,22 +560,6 @@ class AutopilotDaemon:
 
         chapter_num = next_chapter_node.number
         outline = next_chapter_node.outline or next_chapter_node.description or next_chapter_node.title
-
-        # 合并分章叙事节拍（beat_sections）到 outline，让 AI 按用户设定的叙事节拍生成
-        if self.knowledge_service:
-            try:
-                knowledge = self.knowledge_service.get_knowledge(novel.novel_id.value)
-                chapter_entry = next(
-                    (ch for ch in knowledge.chapters if str(ch.chapter_id) == str(chapter_num)),
-                    None
-                )
-                if chapter_entry and getattr(chapter_entry, "beat_sections", None):
-                    beats_text = "\n".join(str(b) for b in chapter_entry.beat_sections if b)
-                    if beats_text.strip():
-                        outline = f"【分章叙事节拍】\n{beats_text}\n\n【章节大纲】\n{outline}"
-                        logger.info(f"[{novel.novel_id}] 已合并第{chapter_num}章分章叙事节拍（{len(chapter_entry.beat_sections)}条）")
-            except Exception as _e:
-                logger.warning(f"[{novel.novel_id}] 读取分章叙事失败，使用原始大纲：{_e}")
 
         if needs_buffer:
             outline = f"【缓冲章：日常过渡】{outline}。主角战后休整，与配角闲聊，展示收获，节奏轻松。"
@@ -703,7 +745,20 @@ class AutopilotDaemon:
             except Exception as e:
                 logger.warning(f"post_process_generated_chapter 失败（仍落库）：{e}")
 
-        # 7. 章节完成，标记 completed
+        # 7. 安全门控（内联 harness safety 层）
+        if chapter_content.strip():
+            safety = self._safety_check(chapter_content)
+            if not safety["passed"]:
+                self._log_safety_violation(novel.novel_id.value, chapter_num, safety["issues"])
+                novel.autopilot_status = AutopilotStatus.SUSPENDED
+                novel.current_stage = NovelStage.PAUSED_FOR_REVIEW
+                self._flush_novel(novel)
+                logger.warning(
+                    f"[{novel.novel_id}] 🛑 第 {chapter_num} 章内容安全拦截，小说已暂停"
+                )
+                return
+
+        # 8. 章节完成，标记 completed
         await self._upsert_chapter_content(novel, next_chapter_node, chapter_content, status="completed")
 
         # 8. 更新计数器，重置节拍索引
@@ -980,7 +1035,7 @@ class AutopilotDaemon:
             temperature=0.35,
         )
         try:
-            result = await self.llm_service.generate(prompt, config)
+            result = await self._generate_with_strategy(prompt, config, stage="beat_writing", novel_id=novel.novel_id)
         except Exception as e:
             logger.warning("[%s] 文风定向修文失败（attempt=%d）：%s", novel.novel_id, attempt, e)
             return None
@@ -1194,7 +1249,7 @@ class AutopilotDaemon:
 张力分（只输出数字）："""
             )
             config = GenerationConfig(max_tokens=5, temperature=0.1)
-            result = await self.llm_service.generate(prompt, config)
+            result = await self._generate_with_strategy(prompt, config, stage="auditing", novel_id="")
             raw = result.content.strip() if hasattr(result, "content") else str(result).strip()
             score = int(''.join(filter(str.isdigit, raw[:3])))
             return max(1, min(10, score))

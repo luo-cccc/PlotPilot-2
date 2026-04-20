@@ -462,6 +462,15 @@ def get_embedding_service():
             "Embedding 配置来源: 数据库 | mode=%s, model=%s, path=%s",
             _mode, _model, _model_path,
         )
+        # 数据库配置存在但关键字段为空时，回退到环境变量
+        if not _model and not _model_path:
+            logger.info("数据库配置为空，回退到环境变量")
+            _mode = os.getenv("EMBEDDING_SERVICE", "local").lower()
+            _api_key = os.getenv("EMBEDDING_API_KEY") or ""
+            _base_url = os.getenv("EMBEDDING_BASE_URL") or ""
+            _model = (os.getenv("EMBEDDING_MODEL") or "").strip()
+            _model_path = (os.getenv("EMBEDDING_MODEL_PATH") or "").strip()
+            _use_gpu = os.getenv("EMBEDDING_USE_GPU", "true").lower() == "true"
     except Exception as exc:
         # 数据库不可用时回退到环境变量
         _mode = os.getenv("EMBEDDING_SERVICE", "local").lower()
@@ -475,7 +484,8 @@ def get_embedding_service():
     try:
         if _mode == "openai":
             key = _api_key or os.getenv("EMBEDDING_API_KEY") or os.getenv("OPENAI_API_KEY") or ""
-            if not key:
+            _is_local = _base_url and ("localhost" in _base_url or "127.0.0.1" in _base_url)
+            if not key and not _is_local:
                 logger.warning("embedding mode=openai 但未配置 API Key，向量检索已禁用")
                 return None
             if not (_model or "").strip():
@@ -530,11 +540,17 @@ _vector_store_singleton: Optional[VectorStore] = None
 def get_vector_store() -> Optional[VectorStore]:
     """获取向量存储（单例，整个进程共享同一实例）
 
-    使用本地 FAISS 向量存储（ChromaDBVectorStore），无需外部服务。
+    根据 VECTOR_STORE_TYPE 自动选择实现：
+    - "qdrant" → QdrantVectorStore（推荐，需外部 Qdrant 服务）
+    - "chromadb" 或其他 → ChromaDBVectorStore（本地 FAISS，需 faiss 依赖）
 
     环境变量配置：
     - VECTOR_STORE_ENABLED: 是否启用（"true" 启用，默认 "true"）
-    - VECTOR_STORE_PATH: 本地存储路径（默认 "./data/chromadb"）
+    - VECTOR_STORE_TYPE: 存储类型（"qdrant" 或 "chromadb"，默认 "chromadb"）
+    - VECTOR_STORE_PATH: 本地存储路径（ChromaDB 用，默认 "./data/chromadb"）
+    - QDRANT_HOST / QDRANT_PORT: Qdrant 连接（默认 localhost:6333）
+    - QDRANT_URL: Qdrant 完整 URL（优先于 host/port）
+    - QDRANT_API_KEY: Qdrant API 密钥（可选）
 
     Returns:
         VectorStore 实例或 None
@@ -546,6 +562,28 @@ def get_vector_store() -> Optional[VectorStore]:
     enabled = os.getenv("VECTOR_STORE_ENABLED", "true").lower() == "true"
     if not enabled:
         return None
+
+    store_type = os.getenv("VECTOR_STORE_TYPE", "chromadb").lower()
+    # 兼容旧版 QDRANT_ENABLED 环境变量
+    qdrant_enabled = os.getenv("QDRANT_ENABLED", "").lower() in {"1", "true", "yes", "on"}
+    use_qdrant = store_type == "qdrant" or qdrant_enabled
+
+    if use_qdrant:
+        try:
+            from infrastructure.ai.qdrant_vector_store import QdrantVectorStore
+            kwargs = {
+                "host": os.getenv("QDRANT_HOST", "localhost"),
+                "port": int(os.getenv("QDRANT_PORT", "6333")),
+                "api_key": os.getenv("QDRANT_API_KEY") or None,
+            }
+            qdrant_url = os.getenv("QDRANT_URL")
+            if qdrant_url:
+                kwargs["url"] = qdrant_url
+            _vector_store_singleton = QdrantVectorStore(**kwargs)
+            return _vector_store_singleton
+        except Exception as e:
+            logger.warning(f"Failed to initialize Qdrant vector store: {e}")
+            return None
 
     try:
         from infrastructure.ai.chromadb_vector_store import ChromaDBVectorStore

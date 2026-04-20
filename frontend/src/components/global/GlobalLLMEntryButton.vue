@@ -105,7 +105,7 @@
                 </button>
               </div>
 
-              <div v-if="drawerTab === 'llm'" class="global-llm-runtime-bar" :class="{ 'is-mock': runtimeSummary?.using_mock }">
+            <div v-if="drawerTab === 'llm'" class="global-llm-runtime-bar" :class="{ 'is-mock': runtimeSummary?.using_mock }">
                 <div class="global-llm-runtime-main">
                   <span class="global-llm-runtime-label">当前激活模型</span>
                   <span class="global-llm-runtime-model">
@@ -122,12 +122,13 @@
                 </div>
               </div>
 
-              <div v-else class="embedding-header-info">
+              <div v-else-if="drawerTab === 'embedding'" class="embedding-header-info">
                 <div class="embedding-header-title">向量检索使用的嵌入模型配置</div>
                 <div class="embedding-header-desc">
                   每本书的向量索引与嵌入模型绑定，一旦开始写作后切换模型将导致已有索引不可用。如需更换，请先删除对应书籍的向量数据（data/chromadb/）再重新生成。
                 </div>
               </div>
+
             </div>
           </div>
         </template>
@@ -209,7 +210,7 @@
                           <n-button
                             size="small"
                             :loading="fetchingEmbeddingModels"
-                            :disabled="!embeddingForm.api_key || !embeddingForm.base_url"
+                            :disabled="(!embeddingForm.api_key && !isLocalEndpoint) || !embeddingForm.base_url"
                             @click="handleFetchEmbeddingModels"
                           >
                             获取列表
@@ -230,6 +231,7 @@
                   </div>
                 </template>
               </div>
+
           </div>
         </div>
 
@@ -262,7 +264,6 @@ import {
 import { settingsApi, type EmbeddingConfig } from '../../api/settings'
 import LLMControlPanel from '../workbench/LLMControlPanel.vue'
 import ModelSettingsModal from '../settings/ModelSettingsModal.vue'
-
 type Appearance = 'sidebar' | 'topbar'
 type DrawerTab = 'embedding' | 'llm'
 
@@ -324,6 +325,11 @@ const embeddingForm = ref<EmbeddingConfig>({
   model: '',
   use_gpu: true,
   model_path: '',
+})
+
+const isLocalEndpoint = computed(() => {
+  const url = embeddingForm.value.base_url || ''
+  return url.includes('localhost') || url.includes('127.0.0.1')
 })
 
 async function loadEmbeddingConfig() {
@@ -716,7 +722,7 @@ function openPanel() {
   position: absolute;
   top: 4px;
   left: 4px;
-  width: calc(50% - 4px);
+  width: calc(33.333% - 4px);
   height: calc(100% - 8px);
   background: var(--tab-track-bg);
   border-radius: calc(var(--app-radius-lg) - 5px);

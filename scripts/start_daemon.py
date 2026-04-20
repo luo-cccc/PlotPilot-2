@@ -30,6 +30,7 @@ from infrastructure.persistence.database.sqlite_foreshadowing_repository import 
 from infrastructure.persistence.database.sqlite_storyline_repository import SqliteStorylineRepository
 from infrastructure.persistence.database.sqlite_plot_arc_repository import SqlitePlotArcRepository
 from infrastructure.persistence.database.sqlite_narrative_event_repository import SqliteNarrativeEventRepository
+from infrastructure.persistence.database.sqlite_chapter_review_repository import SqliteChapterReviewRepository
 
 from application.engine.services.autopilot_daemon import AutopilotDaemon
 from application.engine.services.background_task_service import BackgroundTaskService
@@ -113,6 +114,8 @@ def build_daemon() -> AutopilotDaemon:
         narrative_event_repository=SqliteNarrativeEventRepository(get_database()),
     )
 
+    chapter_review_repo = SqliteChapterReviewRepository(get_database())
+
     aftermath_pipeline = None
     try:
         aftermath_pipeline = ChapterAftermathPipeline(
@@ -126,6 +129,7 @@ def build_daemon() -> AutopilotDaemon:
             chapter_repository=get_chapter_repository(),
             plot_arc_repository=SqlitePlotArcRepository(get_database()),
             narrative_event_repository=SqliteNarrativeEventRepository(get_database()),
+            chapter_review_repository=chapter_review_repo,
         )
         logger.info("ChapterAftermathPipeline 已注入（叙事/向量/文风/KG；三元组与伏笔、故事线、张力、对话、剧情点单次 LLM）")
     except Exception as e:
@@ -147,12 +151,11 @@ def build_daemon() -> AutopilotDaemon:
         planning_service=planning_service,
         story_node_repo=story_node_repo,
         chapter_repository=chapter_repo,
-        poll_interval=10,  # 从 5 秒增加到 10 秒，降低轮询频率以减少 API 压力
+        poll_interval=10,
         voice_drift_service=voice_drift_service,
         circuit_breaker=circuit_breaker,
         chapter_workflow=chapter_workflow,
         aftermath_pipeline=aftermath_pipeline,
-        knowledge_service=get_knowledge_service(),
     )
 
 
