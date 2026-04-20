@@ -14,5 +14,4 @@ export * from './workflow'
 export * from './chronicles'
 
 // Legacy API exports
-export * from './book'
 export * from './stats'
