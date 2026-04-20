@@ -199,6 +199,7 @@ class PromptUpdateRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     tags: Optional[List[str]] = None
+    genre: Optional[str] = None
     change_summary: str = ""
 
 
@@ -214,6 +215,7 @@ class CreateNodeRequest(BaseModel):
     name: str = ""
     description: str = ""
     category: str = "generation"
+    genre: str = ""
     system: str = ""
     user_template: str = ""
 
@@ -276,17 +278,18 @@ async def create_template(payload: CreateTemplateRequest) -> Dict[str, Any]:
 @router.get('/prompts')
 async def list_prompts(
     category: Optional[str] = None,
+    genre: Optional[str] = None,
     template_id: Optional[str] = None,
     search: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    """列举所有提示词节点（支持分类/模板过滤和搜索）。"""
+    """列举所有提示词节点（支持分类/题材/模板过滤和搜索）。"""
     mgr = get_prompt_manager()
     mgr.ensure_seeded()
 
     if search and search.strip():
         nodes = mgr.search_nodes(search.strip())
     else:
-        nodes = mgr.list_nodes(category=category, template_id=template_id,
+        nodes = mgr.list_nodes(category=category, genre=genre, template_id=template_id,
                                include_versions=True)
 
     return [n.to_dict() for n in nodes]

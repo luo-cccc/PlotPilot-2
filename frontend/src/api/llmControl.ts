@@ -144,6 +144,7 @@ export interface PromptNode {
   name: string
   description: string
   category: string
+  genre: string
   source: string
   output_format: 'text' | 'json'
   contract_module: string | null
@@ -159,6 +160,7 @@ export interface PromptNode {
   system_preview: string
   user_template_preview: string
   has_user_edit: boolean
+  system_content_hash: string
 }
 
 /** 提示词节点详情（含完整内容） */
@@ -173,6 +175,7 @@ export interface PromptVersion {
   version_number: number
   change_summary: string
   created_by: string
+  system_content_hash: string
   created_at: string
   system_preview: string
   user_preview: string
@@ -218,6 +221,7 @@ export interface PromptUpdatePayload {
   name?: string
   description?: string
   tags?: string[]
+  genre?: string
   change_summary?: string
 }
 
@@ -227,6 +231,7 @@ export interface CreateNodePayload {
   name: string
   description?: string
   category?: string
+  genre?: string
   system?: string
   user_template?: string
 }

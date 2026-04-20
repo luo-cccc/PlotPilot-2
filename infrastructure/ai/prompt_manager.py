@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import uuid
@@ -52,7 +53,7 @@ class VersionInfo:
     """单个版本信息。"""
 
     __slots__ = ("id", "version_number", "system_prompt", "user_template",
-                 "change_summary", "created_by", "created_at")
+                 "change_summary", "created_by", "system_content_hash", "created_at")
 
     def __init__(self, row: Optional[Dict[str, Any]] = None):
         if row:
@@ -62,6 +63,7 @@ class VersionInfo:
             self.user_template: str = row["user_template"] or ""
             self.change_summary: str = row["change_summary"] or ""
             self.created_by: str = row["created_by"] or "system"
+            self.system_content_hash: str = row.get("system_content_hash") or ""
             self.created_at: str = row["created_at"] or ""
         else:
             self.id = ""
@@ -70,6 +72,7 @@ class VersionInfo:
             self.user_template = ""
             self.change_summary = ""
             self.created_by = "system"
+            self.system_content_hash = ""
             self.created_at = ""
 
     def to_dict(self) -> Dict[str, Any]:
@@ -78,6 +81,7 @@ class VersionInfo:
             "version_number": self.version_number,
             "change_summary": self.change_summary,
             "created_by": self.created_by,
+            "system_content_hash": self.system_content_hash,
             "created_at": self.created_at,
             # 预览截断
             "system_preview": self._preview(self.system_prompt, 150),
@@ -101,7 +105,7 @@ class NodeInfo:
     """提示词节点信息（含当前激活版本）。"""
 
     __slots__ = (
-        "id", "node_key", "name", "description", "category", "source",
+        "id", "node_key", "name", "description", "category", "genre", "source",
         "output_format", "contract_module", "contract_model",
         "tags", "variables", "system_file", "is_builtin", "sort_order",
         "template_id", "active_version_id", "version_count",
@@ -115,6 +119,7 @@ class NodeInfo:
             self.name: str = row["name"]
             self.description: str = row["description"] or ""
             self.category: str = row["category"] or "generation"
+            self.genre: str = row.get("genre") or ""
             self.source: str = row["source"] or ""
             self.output_format: str = row["output_format"] or "text"
             self.contract_module: Optional[str] = row.get("contract_module")
@@ -135,6 +140,7 @@ class NodeInfo:
             self.name = ""
             self.description = ""
             self.category = "generation"
+            self.genre = ""
             self.source = ""
             self.output_format = "text"
             self.contract_module = None
@@ -188,6 +194,7 @@ class NodeInfo:
             "name": self.name,
             "description": self.description,
             "category": self.category,
+            "genre": self.genre,
             "source": self.source,
             "output_format": self.output_format,
             "contract_module": self.contract_module,
@@ -204,6 +211,7 @@ class NodeInfo:
             "system_preview": av.system_prompt[:200] + "..." if av and len(av.system_prompt) > 200 else (av.system_prompt or ""),
             "user_template_preview": av.user_template[:200] + "..." if av and len(av.user_template) > 200 else (av.user_template or ""),
             "has_user_edit": av.created_by == "user" if av else False,
+            "system_content_hash": av.system_content_hash if av else "",
         }
 
     def to_detail_dict(self) -> Dict[str, Any]:
@@ -356,16 +364,17 @@ class PromptManager:
 
             conn.execute("""
                 INSERT INTO prompt_nodes
-                (id, template_id, node_key, name, description, category, source,
+                (id, template_id, node_key, name, description, category, genre, source,
                  output_format, contract_module, contract_model, tags, variables,
                  system_file, is_builtin, sort_order, active_version_id, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
             """, (
                 node_id, template_id,
                 p.get("id", f"node-{idx}"),
                 p.get("name", ""),
                 p.get("description", ""),
                 p.get("category", "generation"),
+                p.get("genre", ""),
                 p.get("source", ""),
                 p.get("output_format", "text"),
                 p.get("contract_module"),
@@ -377,13 +386,14 @@ class PromptManager:
             ))
 
             system_content = p.get("system", "")
+            system_hash = hashlib.sha256(system_content.encode("utf-8")).hexdigest()[:16]
 
             conn.execute("""
                 INSERT INTO prompt_versions
                 (id, node_id, version_number, system_prompt, user_template,
-                 change_summary, created_by, created_at)
-                VALUES (?, ?, 1, ?, ?, '初始种子', 'system', ?)
-            """, (ver_id, node_id, system_content, p.get("user_template", ""), now))
+                 change_summary, created_by, system_content_hash, created_at)
+                VALUES (?, ?, 1, ?, ?, '初始种子', 'system', ?, ?)
+            """, (ver_id, node_id, system_content, p.get("user_template", ""), system_hash, now))
 
         conn.commit()
         self._seeded = True
@@ -442,10 +452,11 @@ class PromptManager:
     def list_nodes(
         self,
         category: Optional[str] = None,
+        genre: Optional[str] = None,
         template_id: Optional[str] = None,
         include_versions: bool = False,
     ) -> List[NodeInfo]:
-        """列举提示词节点，可按分类/模板过滤。"""
+        """列举提示词节点，可按分类/题材/模板过滤。"""
         db = self._get_db()
         params: List[Any] = []
         where_clauses = ["1=1"]
@@ -453,6 +464,9 @@ class PromptManager:
         if category:
             where_clauses.append("n.category = ?")
             params.append(category)
+        if genre:
+            where_clauses.append("n.genre = ?")
+            params.append(genre)
         if template_id:
             where_clauses.append("n.template_id = ?")
             params.append(template_id)
@@ -540,13 +554,14 @@ class PromptManager:
 
         db.execute("""
             INSERT INTO prompt_nodes
-            (id, template_id, node_key, name, description, category,
+            (id, template_id, node_key, name, description, category, genre,
              source, output_format, contract_module, contract_model, tags, variables,
              is_builtin, sort_order, active_version_id, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?)
         """, (
             node_id, template_id, node_key, name,
             kwargs.get("description", ""), kwargs.get("category", "generation"),
+            kwargs.get("genre", ""),
             src, out_fmt, cm, cmodel, tags_s, vars_s,
             ver_id, now, now,
         ))
@@ -554,9 +569,10 @@ class PromptManager:
         db.execute("""
             INSERT INTO prompt_versions
             (id, node_id, version_number, system_prompt, user_template,
-             change_summary, created_by, created_at)
-            VALUES (?, ?, 1, ?, ?, '初始版本', 'user', ?)
-        """, (ver_id, node_id, system_prompt, user_template, now))
+             change_summary, created_by, system_content_hash, created_at)
+            VALUES (?, ?, 1, ?, ?, '初始版本', 'user', ?, ?)
+        """, (ver_id, node_id, system_prompt, user_template,
+              hashlib.sha256(system_prompt.encode("utf-8")).hexdigest()[:16], now))
 
         db.commit()
         return self.get_node(node_id, by_key=False)
@@ -625,13 +641,14 @@ class PromptManager:
         )
 
         # 创建新版本
+        system_hash = hashlib.sha256(new_system.encode("utf-8")).hexdigest()[:16]
         db.execute("""
             INSERT INTO prompt_versions
             (id, node_id, version_number, system_prompt, user_template,
-             change_summary, created_by, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, 'user', ?)
+             change_summary, created_by, system_content_hash, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, 'user', ?, ?)
         """, (new_ver_id, node_id, next_ver, new_system, new_user,
-              change_summary or f"v{next_ver} 编辑", now))
+              change_summary or f"v{next_ver} 编辑", system_hash, now))
 
         # 更新节点的 active_version_id 和元字段
         set_clauses = ["active_version_id = ?", "updated_at = ?"]
@@ -698,16 +715,17 @@ class PromptManager:
         now = datetime.now().isoformat()
 
         # 以目标版本的内容创建新版本（标记为回滚）
+        rollback_hash = hashlib.sha256(target.system_prompt.encode("utf-8")).hexdigest()[:16]
         db.execute("""
             INSERT INTO prompt_versions
             (id, node_id, version_number, system_prompt, user_template,
-             change_summary, created_by, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, 'user', ?)
+             change_summary, created_by, system_content_hash, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, 'user', ?, ?)
         """, (
             new_ver_id, node_id, next_ver,
             target.system_prompt, target.user_template,
             f"回滚到 v{target.version_number}",
-            now,
+            rollback_hash, now,
         ))
 
         db.execute(

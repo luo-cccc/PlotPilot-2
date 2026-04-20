@@ -547,6 +547,7 @@ CREATE TABLE IF NOT EXISTS prompt_nodes (
     name TEXT NOT NULL,
     description TEXT DEFAULT '',
     category TEXT NOT NULL DEFAULT 'generation',  -- generation/extraction/review/planning/world/creative
+    genre TEXT NOT NULL DEFAULT '',    -- 题材分类：fantasy/martial/romance/scifi/horror/history/urban/game/other
     source TEXT DEFAULT '',            -- 来源代码位置
     output_format TEXT DEFAULT 'text',  -- text / json
     contract_module TEXT,              -- Pydantic 合约模块
@@ -575,6 +576,7 @@ CREATE TABLE IF NOT EXISTS prompt_versions (
     user_template TEXT NOT NULL DEFAULT '',      -- User 模板
     change_summary TEXT DEFAULT '',             -- 版本变更说明
     created_by TEXT DEFAULT 'system',           -- system / user
+    system_content_hash TEXT DEFAULT '',         -- SHA256 of system_prompt for change detection
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (node_id) REFERENCES prompt_nodes(id) ON DELETE CASCADE,
     UNIQUE(node_id, version_number)
