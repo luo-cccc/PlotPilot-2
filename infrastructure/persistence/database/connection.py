@@ -226,6 +226,28 @@ def _apply_chapter_summaries_enhancements(conn: sqlite3.Connection) -> None:
 
 
 
+def _apply_prompt_tables_migrations(conn: sqlite3.Connection) -> None:
+    """旧库补齐 prompt_nodes.genre 和 prompt_versions.system_content_hash 列。"""
+    for table, col, dtype, default in [
+        ("prompt_nodes", "genre", "TEXT", "''"),
+        ("prompt_versions", "system_content_hash", "TEXT", "''"),
+    ]:
+        cur = conn.execute(
+            f"SELECT 1 FROM sqlite_master WHERE type='table' AND name='{table}' LIMIT 1"
+        )
+        if cur.fetchone() is None:
+            continue
+        cur = conn.execute(f"PRAGMA table_info({table})")
+        existing = {row[1] for row in cur.fetchall()}
+        if col not in existing:
+            try:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {dtype} DEFAULT {default}")
+                logger.info("prompt migration: added column %s.%s", table, col)
+            except sqlite3.OperationalError as e:
+                logger.warning("prompt migration skip %s.%s: %s", table, col, e)
+    conn.commit()
+
+
 def _apply_migration_files(conn: sqlite3.Connection) -> None:
     """应用 migrations 目录下全部 .sql（幂等执行，顺序按文件名稳定排序）。"""
     migrations_dir = _database_asset_dir() / "migrations"
@@ -327,6 +349,7 @@ class DatabaseConnection:
         _apply_character_enhancements(conn)
         _apply_chapter_summaries_enhancements(conn)
         _ensure_triple_provenance_table(conn)
+        _apply_prompt_tables_migrations(conn)
         _apply_migration_files(conn)
         conn.close()
 
