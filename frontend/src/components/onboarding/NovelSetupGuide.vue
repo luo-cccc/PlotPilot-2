@@ -27,7 +27,49 @@
           <div class="wizard-error-text">{{ bibleError }}</div>
         </n-alert>
         <n-spin :show="generatingBible">
-          <div v-if="!bibleGenerated" class="step-info">
+          <div v-if="!bibleGenerated && !generatingBible" class="preferences-form">
+            <n-alert type="info" style="margin-bottom: 16px; width: 100%">
+              选填偏好可帮助 AI 生成更符合预期的小说世界；跳过则由 AI 自行判断。
+            </n-alert>
+            <n-space vertical :size="12">
+              <div class="pref-section">
+                <div class="pref-label">题材（可多选）</div>
+                <n-space>
+                  <n-tag v-for="g in GENRE_OPTIONS" :key="g.value" checkable
+                    :checked="selectedGenres.includes(g.value)"
+                    @update:checked="(v: boolean) => toggleGenre(g.value, v)">
+                    {{ g.label }}
+                  </n-tag>
+                </n-space>
+              </div>
+              <div class="pref-section">
+                <div class="pref-label">核心冲突偏好</div>
+                <n-space>
+                  <n-tag v-for="c in CONFLICT_OPTIONS" :key="c.value" checkable
+                    :checked="selectedConflict === c.value"
+                    @update:checked="(v: boolean) => { if(v) selectedConflict = c.value }">
+                    {{ c.label }}
+                  </n-tag>
+                </n-space>
+              </div>
+              <div class="pref-section">
+                <div class="pref-label">目标读者</div>
+                <n-space>
+                  <n-tag v-for="a in AUDIENCE_OPTIONS" :key="a.value" checkable
+                    :checked="selectedAudience === a.value"
+                    @update:checked="(v: boolean) => { if(v) selectedAudience = a.value }">
+                    {{ a.label }}
+                  </n-tag>
+                </n-space>
+              </div>
+              <n-space style="margin-top: 8px">
+                <n-button type="primary" @click="startBibleGenerationWithPrefs">开始生成世界观</n-button>
+                <n-button secondary @click="startBibleGeneration()">跳过，直接生成</n-button>
+              </n-space>
+            </n-space>
+          </div>
+
+          <div v-else-if="!bibleGenerated" class="step-info">
             <n-icon size="48" color="#18a058">
               <IconBook />
             </n-icon>
@@ -187,6 +229,26 @@
         </n-alert>
 
         <n-spin :show="plotSuggesting" style="width: 100%">
+          <!-- 方向选择：尚未选择时显示 -->
+          <div v-if="!plotSuggesting && !mainPlotCommitted && selectedDirections.length === 0" class="direction-selector">
+            <n-alert type="info" style="margin-bottom: 12px; width: 100%">
+              选 1-2 个你最想讲的故事方向，AI 据此推演更有针对性的主线候选；跳过则由 AI 自行判断。
+            </n-alert>
+            <n-space vertical :size="8" style="margin-bottom: 16px">
+              <div class="dir-row">
+                <n-tag v-for="d in PLOT_DIRECTION_OPTIONS" :key="d.value" checkable
+                  :checked="selectedDirections.includes(d.value)"
+                  @update:checked="(v: boolean) => toggleDirection(d.value, v)">
+                  {{ d.label }}
+                </n-tag>
+              </div>
+            </n-space>
+            <n-space>
+              <n-button type="primary" :disabled="selectedDirections.length === 0" @click="loadPlotSuggestionsWithDirs">推演主线</n-button>
+              <n-button secondary @click="loadPlotSuggestions">跳过，让 AI 自行判断</n-button>
+            </n-space>
+          </div>
+
           <div v-if="!customMode" class="plot-options-block">
             <n-space vertical :size="12" style="width: 100%">
               <n-card
@@ -404,6 +466,38 @@ function isLikelyTimeoutError(error: unknown): boolean {
 /** 向导内：单阶段轮询 Bible 就绪的最长等待（与单步 HTTP 超时一致，默认 400s） */
 const WIZARD_BIBLE_POLL_DEADLINE_MS = WIZARD_STEP_TIMEOUT_MS
 
+const GENRE_OPTIONS = [
+  { label: '玄幻', value: 'fantasy' },
+  { label: '武侠', value: 'martial' },
+  { label: '都市', value: 'urban' },
+  { label: '科幻', value: 'scifi' },
+  { label: '历史', value: 'history' },
+  { label: '恐怖', value: 'horror' },
+  { label: '游戏', value: 'game' },
+  { label: '言情', value: 'romance' },
+]
+const CONFLICT_OPTIONS = [
+  { label: '复仇/崛起', value: 'revenge' },
+  { label: '权谋/博弈', value: 'politics' },
+  { label: '探索/解谜', value: 'exploration' },
+  { label: '情感/成长', value: 'emotion' },
+  { label: '生存/逃亡', value: 'survival' },
+  { label: '战争/史诗', value: 'war' },
+]
+const AUDIENCE_OPTIONS = [
+  { label: '老白读者', value: 'experienced' },
+  { label: '轻度读者', value: 'moderate' },
+  { label: '学生群体', value: 'student' },
+]
+const PLOT_DIRECTION_OPTIONS = [
+  { label: '复仇/崛起', value: 'revenge' },
+  { label: '权谋/博弈', value: 'politics' },
+  { label: '探索/解谜', value: 'exploration' },
+  { label: '情感/成长', value: 'emotion' },
+  { label: '生存/逃亡', value: 'survival' },
+  { label: '战争/史诗', value: 'war' },
+]
+
 const IconBook = () =>
   h(
     'svg',
@@ -482,6 +576,10 @@ const worldbuildingData = ref<ReturnType<typeof emptyWorldbuildingShape>>(emptyW
 
 const styleConventionDisplay = computed(() => styleConventionFromBible(bibleData.value))
 
+const selectedGenres = ref<string[]>([])
+const selectedConflict = ref('')
+const selectedAudience = ref('')
+
 // 第2步：生成人物和地点
 const generatingCharacters = ref(false)
 const charactersGenerated = ref(false)
@@ -505,6 +603,7 @@ const customMode = ref(false)
 const customLogline = ref('')
 const adoptingPlotId = ref<string | null>(null)
 const adoptingCustom = ref(false)
+const selectedDirections = ref<string[]>([])
 
 const chapterEndForStoryline = computed(() => Math.max(1, props.targetChapters ?? 100))
 
@@ -527,6 +626,34 @@ async function loadPlotSuggestions() {
 
 async function refreshPlotSuggestions() {
   await loadPlotSuggestions()
+}
+
+function toggleDirection(dir: string, selected: boolean) {
+  if (selected) {
+    if (!selectedDirections.value.includes(dir)) {
+      selectedDirections.value = [...selectedDirections.value, dir]
+    }
+  } else {
+    selectedDirections.value = selectedDirections.value.filter((d) => d !== dir)
+  }
+}
+
+async function loadPlotSuggestionsWithDirs() {
+  if (selectedDirections.value.length === 0) return
+  plotSuggesting.value = true
+  plotSuggestError.value = ''
+  try {
+    const res = await workflowApi.suggestMainPlotOptions(props.novelId, selectedDirections.value)
+    plotOptions.value = res.plot_options || []
+  } catch (e: unknown) {
+    let msg = formatApiError(e) || '推演失败，请重试'
+    if (isLikelyTimeoutError(e)) {
+      msg = `请求超时：本步前端最长等待约 ${WIZARD_STEP_TIMEOUT_SECONDS} 秒。主线推演依赖 LLM，请在 AI 控制台调大「超时（秒）」或换更快模型后，点击「重新推演」。`
+    }
+    plotSuggestError.value = msg
+  } finally {
+    plotSuggesting.value = false
+  }
 }
 
 async function adoptPlotOption(opt: MainPlotOptionDTO) {
@@ -667,7 +794,23 @@ function pollBibleUntil(
  * 必须用 function 声明放在 watch 之前：`watch(..., { immediate: true })` 会同步调用回调，
  * `const startBibleGeneration = ...` 尚在暂存死区会导致运行时报错 / 逻辑异常。
  */
-async function startBibleGeneration() {
+function toggleGenre(genre: string, selected: boolean) {
+  if (selected) {
+    selectedGenres.value.push(genre)
+  } else {
+    selectedGenres.value = selectedGenres.value.filter(g => g !== genre)
+  }
+}
+
+async function startBibleGenerationWithPrefs() {
+  const prefs: Record<string, unknown> = {}
+  if (selectedGenres.value.length) prefs.genre_tags = selectedGenres.value
+  if (selectedConflict.value) prefs.conflict_preference = selectedConflict.value
+  if (selectedAudience.value) prefs.target_audience = selectedAudience.value
+  await startBibleGeneration(Object.keys(prefs).length > 0 ? prefs : undefined)
+}
+
+async function startBibleGeneration(prefs?: Record<string, unknown>) {
   clearGenerationTimers()
   biblePollEpoch.value += 1
   const epoch = biblePollEpoch.value
@@ -676,7 +819,7 @@ async function startBibleGeneration() {
 
   try {
     // 第1步：只生成世界观和文风
-    await bibleApi.generateBible(props.novelId, 'worldbuilding')
+    await bibleApi.generateBible(props.novelId, 'worldbuilding', prefs as any)
     if (biblePollEpoch.value !== epoch || !generatingBible.value) return
     bibleStatusText.value = '正在生成世界观和文风...'
 
@@ -772,6 +915,10 @@ function resetWizardStateForOpen() {
   plotSuggestError.value = ''
   charactersError.value = ''
   locationsError.value = ''
+  selectedGenres.value = []
+  selectedConflict.value = ''
+  selectedAudience.value = ''
+  selectedDirections.value = []
 }
 
 function stopGenerationOnClose() {
@@ -797,18 +944,11 @@ watch(
 onMounted(() => {
   if (props.show) {
     resetWizardStateForOpen()
-    void startBibleGeneration()
   }
 })
 
 onUnmounted(() => {
   stopGenerationOnClose()
-})
-
-watch(currentStep, (step) => {
-  if (step === 4 && props.show && plotOptions.value.length === 0 && !plotSuggesting.value) {
-    void loadPlotSuggestions()
-  }
 })
 
 const handleNext = async () => {
@@ -990,5 +1130,23 @@ const handleComplete = () => {
   white-space: pre-wrap;
   line-height: 1.65;
   font-size: 14px;
+}
+
+.preferences-form {
+  width: 100%;
+  max-width: 560px;
+  padding: 8px 0;
+}
+
+.pref-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pref-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #444;
 }
 </style>

@@ -5,7 +5,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import Dict, List, Optional
 from application.workflows.auto_novel_generation_workflow import AutoNovelGenerationWorkflow
 from application.engine.services.hosted_write_service import HostedWriteService
@@ -148,6 +148,11 @@ class MainPlotOptionItem(BaseModel):
 
 class SuggestMainPlotOptionsResponse(BaseModel):
     plot_options: List[MainPlotOptionItem]
+
+
+class SuggestPlotDirectionsRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    directions: List[str] = Field(default_factory=list, description="用户选定的故事方向列表：revenge/politics/exploration/emotion/survival/war")
 
 
 def _storyline_to_response(storyline) -> StorylineResponse:
@@ -318,14 +323,16 @@ async def hosted_write_stream(
 )
 async def suggest_main_plot_options(
     novel_id: str,
+    body: Optional[SuggestPlotDirectionsRequest] = None,
     novel_service=Depends(get_novel_service),
     setup_svc=Depends(get_setup_main_plot_suggestion_service),
 ):
     """向导 Step 4：根据 Bible 与小说元数据，由 LLM 推演 3 条主线候选。"""
     if novel_service.get_novel(novel_id) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Novel not found")
+    directions = body.directions if body else []
     try:
-        raw = await setup_svc.suggest_options(novel_id)
+        raw = await setup_svc.suggest_options(novel_id, directions=directions)
         items = [MainPlotOptionItem(**opt) for opt in raw]
         return SuggestMainPlotOptionsResponse(plot_options=items)
     except Exception as e:
@@ -662,6 +669,10 @@ class PlanRequest(BaseModel):
     """大纲规划请求"""
     mode: str = Field("initial", description="模式：initial=首次生成，revise=再规划")
     dry_run: bool = Field(False, description="预演模式（不调用 LLM）")
+    structure_preference: Optional[Dict[str, int]] = Field(
+        default=None,
+        description="精密结构偏好：{'parts': 部数, 'volumes': 卷数, 'acts': 幕数}，None则使用极速模式"
+    )
 
 
 class PlanResponse(BaseModel):
@@ -751,7 +762,7 @@ async def plan_novel(
         macro_plan = await continuous_planning_service.generate_macro_plan(
             novel_id=novel_id,
             target_chapters=novel.target_chapters,
-            structure_preference=None,
+            structure_preference=request.structure_preference,
         )
         logger.info(f"[PlanNovel] Macro plan generated, persisting (shared path with autopilot)")
 

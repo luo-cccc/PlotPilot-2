@@ -524,14 +524,26 @@ const genreOptions = [
 ]
 
 const worldPresetOptions = [
-  { label: '修仙风（宗门、境界、机缘）', value: '修仙风' },
-  { label: '赛博朋克（巨企、义体、霓虹）', value: '赛博朋克风' },
-  { label: '悬疑风（谜题、反转、线索）', value: '悬疑风' },
-  { label: '高武江湖（门派、恩怨）', value: '高武江湖' },
-  { label: '末日废土（生存、资源）', value: '末日废土' },
-  { label: '西幻史诗（王国、种族）', value: '西幻史诗' },
-  { label: '现代都市（职场、日常）', value: '现代都市' },
-  { label: '克系诡异（未知、调查）', value: '克系诡异' },
+  { label: '赛博朋克（cyberpunk）', value: 'cyberpunk' },
+  { label: '废土末日（post_apocalyptic）', value: 'post_apocalyptic' },
+  { label: '克苏鲁（lovecraftian）', value: 'lovecraftian' },
+  { label: '蒸汽朋克（steampunk）', value: 'steampunk' },
+  { label: '玄幻仙侠（xianxia）', value: 'xianxia' },
+  { label: '东方玄幻（eastern_fantasy）', value: 'eastern_fantasy' },
+  { label: '西方奇幻（western_fantasy）', value: 'western_fantasy' },
+  { label: '近未来（near_future）', value: 'near_future' },
+  { label: '暗黑哥特（dark_gothic）', value: 'dark_gothic' },
+  { label: '乌托邦（utopian）', value: 'utopian' },
+  { label: '反乌托邦（dystopian）', value: 'dystopian' },
+  { label: '战争废土（war_torn）', value: 'war_torn' },
+  { label: '神秘古老（ancient_mysterious）', value: 'ancient_mysterious' },
+  { label: '都市异能（urban_supernatural）', value: 'urban_supernatural' },
+  { label: '星际科幻（space_scifi）', value: 'space_scifi' },
+  { label: '低魔中世纪（low_magic_medieval）', value: 'low_magic_medieval' },
+  { label: '历史武侠（historical_wuxia）', value: 'historical_wuxia' },
+  { label: '现代都市（modern_urban）', value: 'modern_urban' },
+  { label: '超自然都市（supernatural_urban）', value: 'supernatural_urban' },
+  { label: '异界穿越（isekai）', value: 'isekai' },
 ]
 
 const filteredBooks = computed(() => {

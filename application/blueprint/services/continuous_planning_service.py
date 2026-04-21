@@ -1360,7 +1360,8 @@ class ContinuousPlanningService:
             logger.error("Planning content length: %d", len(cleaned))
             logger.error("Planning raw content (first 1000 chars): %s", cleaned[:1000])
             logger.error("Planning raw content (last 500 chars): %s", cleaned[-500:])
-            raise
+            logger.warning("JSON 解析失败，返回空结构触发 fallback")
+            return {}
 
     def _calculate_chapter_distribution(self, total_chapters: int, parts: int) -> Dict[str, List[int]]:
         """计算黄金比例的章数分配
@@ -1505,7 +1506,7 @@ class ContinuousPlanningService:
 {{"title": "卷标题", "theme": "卷主题", "estimated_chapters": 预估章数（必填整数）}}
 
 {"如果规划深度为 full 或 partial，每卷还应包含 acts 数组，每幕也必须有 estimated_chapters：" if planning_depth != "framework" else "超长篇不输出 acts，但必须确保每卷的 estimated_chapters 之和等于目标章数。"}
-{"每幕格式：" if planning_depth == "full" else ""}
+{"每幕格式：" if planning_depth in ("full", "partial") else ""}
 {{"acts": [{{"title": "幕标题", "estimated_chapters": 预估章数（必填整数）, "description": "情节摘要"}}]}}
 
 【章数校验】请确保：所有卷/幕的 estimated_chapters 之和 = {target_chapters}

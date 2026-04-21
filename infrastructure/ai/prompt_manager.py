@@ -295,6 +295,7 @@ class PromptManager:
         """
         self._db = db_connection
         self._seeded = False
+        self._stats_cache: Optional[Dict[str, Any]] = None
 
     def _get_db(self):
         """与主应用共用同一 SQLite（含桌面版 AITEXT_PROD_DATA_DIR）。"""
@@ -397,6 +398,7 @@ class PromptManager:
 
         conn.commit()
         self._seeded = True
+        self._stats_cache = None
         count = len(prompts)
         logger.info("PromptManager: 已导入 %d 个内置提示词种子", count)
         return True
@@ -442,6 +444,7 @@ class PromptManager:
             VALUES (?, ?, ?, ?, '1.0.0', '', '📦', '#6b7280', 0, '{}', ?, ?)
         """, (tid, name, description, category, now, now))
         db.commit()
+        self._stats_cache = None
         return TemplateInfo({"id": tid, "name": name, "description": description,
                              "category": category, "node_count": 0})
 
@@ -575,6 +578,7 @@ class PromptManager:
               hashlib.sha256(system_prompt.encode("utf-8")).hexdigest()[:16], now))
 
         db.commit()
+        self._stats_cache = None
         return self.get_node(node_id, by_key=False)
 
     def delete_node(self, node_id: str) -> bool:
@@ -582,6 +586,7 @@ class PromptManager:
         db = self._get_db()
         cursor = db.execute("DELETE FROM prompt_nodes WHERE id = ?", (node_id,))
         db.commit()
+        self._stats_cache = None
         return cursor.rowcount > 0
 
     # ------------------------------------------------------------------
@@ -686,6 +691,7 @@ class PromptManager:
         sql = f"UPDATE prompt_nodes SET {', '.join(set_clauses)} WHERE id = ?"
         db.execute(sql, params)
         db.commit()
+        self._stats_cache = None
 
         return self.get_node(node_id, by_key=False)
 
@@ -733,6 +739,7 @@ class PromptManager:
             (new_ver_id, now, node_id),
         )
         db.commit()
+        self._stats_cache = None
 
         return self.get_node(node_id, by_key=False)
 
@@ -798,7 +805,9 @@ class PromptManager:
     # ------------------------------------------------------------------
 
     def get_stats(self) -> Dict[str, Any]:
-        """获取提示词库统计。"""
+        """获取提示词库统计（实例级缓存）。"""
+        if self._stats_cache is not None:
+            return self._stats_cache
         db = self._get_db()
         total_nodes = db.execute("SELECT COUNT(*) AS c FROM prompt_nodes").fetchone()["c"]
         total_templates = db.execute("SELECT COUNT(*) AS c FROM prompt_templates").fetchone()["c"]
@@ -814,7 +823,7 @@ class PromptManager:
         ).fetchall()
         categories = {r["category"]: r["c"] for r in cat_rows}
 
-        return {
+        self._stats_cache = {
             "total_nodes": total_nodes,
             "total_templates": total_templates,
             "total_versions": total_versions,
@@ -822,6 +831,7 @@ class PromptManager:
             "custom_count": custom_count,
             "categories": categories,
         }
+        return self._stats_cache
 
     def get_nodes_by_category(self) -> Dict[str, List[NodeInfo]]:
         """按分类分组的所有节点。"""
@@ -832,9 +842,12 @@ class PromptManager:
         return result
 
     def get_categories_info(self) -> List[Dict[str, Any]]:
-        """返回分类定义列表（含节点计数）。"""
-        stats = self.get_stats()
-        cat_counts = stats.get("categories", {})
+        """返回分类定义列表（含节点计数，单次 GROUP BY 查询）。"""
+        db = self._get_db()
+        cat_rows = db.execute(
+            "SELECT category, COUNT(*) AS c FROM prompt_nodes GROUP BY category"
+        ).fetchall()
+        cat_counts = {r["category"]: r["c"] for r in cat_rows}
         result = []
         for cat_def in BUILTIN_CATEGORIES:
             info = dict(cat_def)

@@ -40,7 +40,7 @@ class StateExtractor:
         # 配置 LLM
         config = GenerationConfig(
             model=os.getenv("WRITING_MODEL", ""),
-            max_tokens=4096,
+            max_tokens=8192,
             temperature=0.3
         )
 

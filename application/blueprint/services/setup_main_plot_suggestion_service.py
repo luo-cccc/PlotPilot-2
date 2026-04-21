@@ -167,11 +167,25 @@ class SetupMainPlotSuggestionService:
             },
         ]
 
-    async def suggest_options(self, novel_id: str) -> List[Dict[str, str]]:
+    async def suggest_options(self, novel_id: str, directions: Optional[List[str]] = None) -> List[Dict[str, str]]:
         ctx = self._build_context(novel_id)
         user_blob = json.dumps(ctx, ensure_ascii=False, indent=2)
 
-        system_prompt = """你是一位拥有十年经验的华语网络小说白金级编辑。作者已完成世界观与人物等静态设定，你需要推演 3 个截然不同、但都具有强商业张力与可读性的主线故事轴（Main Plot Options）。
+        dir_block = ""
+        if directions:
+            dir_map = {
+                "revenge": "复仇/崛起型：侧重主角逆境重生、讨债、血债血偿，以牙还牙的痛快节奏",
+                "politics": "权谋/博弈型：侧重卷入更高层权力结构，智斗与信息差，信息战与格局对抗",
+                "exploration": "探索/解谜型：侧重未知世界的真相揭示，主角的认知突破与世界观扩展",
+                "emotion": "情感/成长型：侧重人物关系演变与内心成长，情感羁绊与牺牲",
+                "survival": "生存/逃亡型：侧重大时间跨度、绝境求生、步步为营的压迫感",
+                "war": "战争/史诗型：侧重阵营对抗、格局宏大、命运与选择的碰撞",
+            }
+            selected = [dir_map[d] for d in directions if d in dir_map]
+            if selected:
+                dir_block = "\n[用户选定的故事方向]\n" + "\n".join(f"- {s}" for s in selected)
+
+        system_prompt = f"""你是一位拥有十年经验的华语网络小说白金级编辑。作者已完成世界观与人物等静态设定，你需要推演 3 个截然不同、但都具有强商业张力与可读性的主线故事轴（Main Plot Options）。
 
 推演原则：
 1. 切入点差异化：
@@ -180,27 +194,28 @@ class SetupMainPlotSuggestionService:
    - 选项 C：异类/变数觉醒（主角具备颠覆当前世界规则的异常属性或认知）。
 2. 张力前置：每个方案必须写清核心冲突（谁对抗谁、赌注/代价是什么）。
 3. 结合输入中的世界观、主角与地点，避免空泛套路句，要有具体钩子。
+{dir_block if dir_block else ""}
 
 JSON Schema：
-{
+{{
   "plot_options": [
-    {
+    {{
       "id": "option_a_xxx",
       "type": "简短类型标签",
       "title": "标题（8-16字为宜）",
       "logline": "一句话故事梗概",
       "core_conflict": "核心冲突（谁 vs 谁，代价）",
       "starting_hook": "开篇钩子场景或事件"
-    }
+    }}
   ]
-}
+}}
 必须恰好包含 3 个元素，顺序对应 A/B/C 三类切入点。
 
 请按照以下json格式进行输出，可以被Python json.loads函数解析。只给出JSON，不作解释，不作答：
 ```json
-{
+{{
   "plot_options": []
-}
+}}
 ```"""
 
         user_prompt = f"""{SETUP_TASK_MARKER}

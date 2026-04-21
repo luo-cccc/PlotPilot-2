@@ -45,9 +45,11 @@ def repair_json(text: str) -> str:
     if not text:
         return text
 
+    # 先尝试直接解析：成功且返回 dict/list 才提前返回
     try:
-        json.loads(text)
-        return text
+        parsed = json.loads(text)
+        if isinstance(parsed, (dict, list)):
+            return text
     except (json.JSONDecodeError, ValueError):
         pass
 
@@ -88,32 +90,51 @@ def repair_json(text: str) -> str:
                 res.append(ch)
 
         if in_string:
-            res += '"'
-        res = res.strip()
+            res.append('"')
+        res = ''.join(res).strip()
         while res.endswith(','):
             res = res[:-1].strip()
         while stack:
-            res = res.strip()
-            if res.endswith(','):
-                res = res[:-1].strip()
-            res += stack.pop()
-        return res
+            res_str = ''.join(res).strip()
+            if res_str.endswith(','):
+                res_str = res_str[:-1].strip()
+            res_str += stack.pop()
+            res = list(res_str)
+        return ''.join(res)
 
     current_s = text
     # 截断修复迭代次数上限，避免与 LLM 侧无限循环叠加
     max_retries = 3
+    last_valid = None
     while max_retries > 0 and current_s:
         repaired = _do_repair(current_s)
         try:
-            json.loads(repaired)
-            return repaired
+            parsed = json.loads(repaired)
+            # 必须返回 dict 或 list（JSON 对象/数组）
+            if isinstance(parsed, (dict, list)):
+                return repaired
+            # 否则记录但继续尝试
+            last_valid = repaired
         except json.JSONDecodeError:
-            idx = current_s.rfind(',')
-            if idx == -1:
-                break
-            current_s = current_s[:idx]
+            pass
+        idx = current_s.rfind(',')
+        if idx == -1:
+            break
+        current_s = current_s[:idx]
         max_retries -= 1
-    return _do_repair(text)
+    # 如果没有获得有效的 dict/list，尝试返回 last_valid 或最终修复结果
+    final = _do_repair(text)
+    parsed = None
+    try:
+        parsed = json.loads(final)
+        if isinstance(parsed, (dict, list)):
+            return final
+    except json.JSONDecodeError:
+        pass
+    if parsed is not None and isinstance(parsed, (dict, list)):
+        return final
+    # 所有方法都失败：返回空对象而非崩溃
+    return '{}' 
 
 
 def parse_llm_json_to_dict(raw: str) -> Tuple[Optional[Dict[str, Any]], List[str]]:

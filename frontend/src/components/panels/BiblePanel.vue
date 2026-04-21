@@ -78,27 +78,13 @@
             <n-descriptions-item label="赛道 / 类型">{{ lockedGenre || '—' }}</n-descriptions-item>
             <n-descriptions-item label="世界观基调">{{ lockedWorld || '—' }}</n-descriptions-item>
             <n-descriptions-item label="文风市场预设">
-              <n-space size="small" wrap align="center">
-                <n-tag
-                  v-if="stylePresetTag.matched"
-                  type="info"
-                  size="small"
-                  round
-                  :bordered="false"
-                >
-                  {{ stylePresetTag.label }}
-                </n-tag>
-                <n-tag
-                  v-else-if="stylePresetTag.hasText"
-                  type="warning"
-                  size="small"
-                  round
-                  :bordered="false"
-                >
-                  {{ stylePresetTag.label }}
-                </n-tag>
-                <n-tag v-else type="default" size="small" round :bordered="false">—</n-tag>
-              </n-space>
+              <n-select
+                v-model:value="selectedPresetValue"
+                :options="stylePresetOptions"
+                placeholder="选择文风模板"
+                size="small"
+                style="max-width: 180px"
+              />
             </n-descriptions-item>
           </n-descriptions>
           <n-collapse
@@ -231,27 +217,23 @@ const hasBookLock = computed(() => {
 })
 
 /** 文风市场预设：匹配内置模板则显示预设名，否则警告文案 */
-const stylePresetTag = computed(() => {
-  const t = (state.value.style_notes || '').trim()
-  if (!t) {
-    return { matched: false, hasText: false, label: '—' }
-  }
-  const m = matchPresetValue(t)
-  if (m) {
-    const p = MARKET_STYLE_PRESETS.find((x) => x.value === m)
-    return { matched: true, hasText: true, label: p?.label ?? m }
-  }
-  return {
-    matched: false,
-    hasText: true,
-    label: '与内置模板不一致（可能来自旧数据或导入）',
-  }
-})
-
 function applyStylePresetByValue(value: string) {
   const p = MARKET_STYLE_PRESETS.find((x) => x.value === value)
   if (p) state.value.style_notes = p.body
 }
+
+const stylePresetOptions = computed(() =>
+  MARKET_STYLE_PRESETS.map((p) => ({ label: p.label, value: p.value }))
+)
+
+const selectedPresetValue = computed({
+  get: () => matchPresetValue(state.value.style_notes) ?? null,
+  set: (val: string | null) => {
+    if (!val) return
+    applyStylePresetByValue(val)
+    void save()
+  },
+})
 
 const stats = computed(() => {
   const styleOk = (state.value.style_notes || '').trim().length >= 20

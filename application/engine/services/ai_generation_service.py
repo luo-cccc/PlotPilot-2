@@ -59,7 +59,7 @@ class AIGenerationService:
         Raises:
             EntityNotFoundError: 如果小说不存在
             ValueError: 如果输入参数无效
-            RuntimeError: 如果 LLM 生成失败
+            RuntimeError: 如果 LLM 生成失败（超过最大重试次数）
         """
         # 验证输入
         if not outline or not outline.strip():
@@ -76,15 +76,17 @@ class AIGenerationService:
         # 3. 构建提示词
         prompt = self._build_chapter_prompt(novel, bible, chapter_number, outline)
 
-        # 4. 调用 LLM
+        # 4. 调用 LLM（带 fallback）
         try:
-            config = GenerationConfig()
+            config = GenerationConfig(max_tokens=8192, temperature=0.8)
             result = await self.llm_service.generate(prompt, config)
             logger.info(f"Successfully generated chapter {chapter_number} for novel {novel_id}")
             return result.content
         except Exception as e:
             logger.error(f"LLM generation failed for novel {novel_id}, chapter {chapter_number}: {str(e)}")
-            raise RuntimeError(f"Failed to generate chapter: {str(e)}") from e
+            raise RuntimeError(
+                f"章节 {chapter_number} 生成失败（LLM 不可用或超时）：{str(e)}"
+            ) from e
 
     def _build_chapter_prompt(
         self,
@@ -104,24 +106,39 @@ class AIGenerationService:
         Returns:
             Prompt 对象
         """
-        system_message = f"你是一位专业的小说作家，正在创作《{novel.title}》。"
+        system_message = (
+            f"你是一位专业的小说作家，正在创作《{novel.title}》。\n\n"
+            "写作要求：\n"
+            "1. 第三人称叙事，视角稳定\n"
+            "2. 场景描写具体，动作描写干净\n"
+            "3. 对话自然，不堆砌\n"
+            "4. 严格围绕给定大纲展开，不得偏离\n"
+            "5. 每章不低于 2000 字\n"
+            "6. 禁止：开头空两格、章节末使用'本章完'、第一人称\n\n"
+            "输出格式：纯正文，不含章节标题（标题已在系统侧添加）"
+        )
 
         # 添加人物信息
         if bible and bible.characters:
             char_info = "\n".join([
                 f"- {char.name}: {char.description}"
-                for char in bible.characters
+                for char in bible.characters[:8]
             ])
-            system_message += f"\n\n主要人物：\n{char_info}"
+            system_message += f"\n\n【主要人物】\n{char_info}"
 
         # 添加世界设定
         if bible and bible.world_settings:
             setting_info = "\n".join([
                 f"- {setting.name}: {setting.description}"
-                for setting in bible.world_settings
+                for setting in bible.world_settings[:5]
             ])
-            system_message += f"\n\n世界设定：\n{setting_info}"
+            system_message += f"\n\n【世界设定】\n{setting_info}"
 
-        user_message = f"请根据以下大纲创作第{chapter_number}章：\n\n{outline}"
+        user_message = (
+            f"请根据以下大纲创作第 {chapter_number} 章，\n"
+            f"严格遵循上述写作要求：\n\n"
+            f"【章节大纲】\n{outline}\n\n"
+            "直接输出章节正文，不需要标题。"
+        )
 
         return Prompt(system=system_message, user=user_message)

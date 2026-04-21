@@ -316,10 +316,10 @@ export const workflowApi = {
     apiClient.get<StorylineGraphDataDTO>(`/novels/${novelId}/storylines/graph-data`) as unknown as Promise<StorylineGraphDataDTO>,
 
   /** POST /api/v1/novels/{novel_id}/setup/suggest-main-plot-options（单次 LLM；引导页默认 400s） */
-  suggestMainPlotOptions: (novelId: string) =>
+  suggestMainPlotOptions: (novelId: string, directions?: string[]) =>
     apiClient.post<{ plot_options: MainPlotOptionDTO[] }>(
       `/novels/${novelId}/setup/suggest-main-plot-options`,
-      {},
+      directions?.length ? { directions } : {},
       { timeout: WIZARD_STEP_TIMEOUT_MS }
     ) as unknown as Promise<{ plot_options: MainPlotOptionDTO[] }>,
 

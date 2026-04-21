@@ -17,7 +17,17 @@ from infrastructure.ai.url_utils import (
 
 logger = logging.getLogger(__name__)
 
-LLMProtocol = Literal['openai', 'anthropic', 'gemini']
+LLMProtocol = Literal['openai', 'anthropic', 'gemini', 'minimax']
+
+
+def _normalize_protocol(protocol: str) -> LLMProtocol:
+    """归一化协议值：将旧版/第三方协议映射到合法枚举"""
+    if protocol in ('openai', 'anthropic', 'gemini', 'minimax'):
+        return protocol  # type: ignore[return-value]
+    # minimax 等 OpenAI 兼容接口映射到 openai
+    return 'openai'
+
+
 
 
 class LLMPreset(BaseModel):
@@ -139,7 +149,7 @@ class LLMControlService:
             id=row['id'],
             name=row['name'],
             preset_key=row['preset_key'],
-            protocol=row['protocol'],
+            protocol=_normalize_protocol(row['protocol']),
             base_url=row['base_url'] or '',
             api_key=row['api_key'] or '',
             model=row['model'] or '',

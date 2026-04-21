@@ -65,6 +65,7 @@ from interfaces.api.v1.engine import (
     snapshot_routes,
     workbench_context_routes,
     character_scheduler_routes,  # 角色调度API（正式功能）
+    vector_store_routes,
 )
 
 # Audit module
@@ -456,6 +457,7 @@ app.include_router(snapshot_routes.router, prefix="/api/v1")
 app.include_router(autopilot_routes.router, prefix="/api/v1")
 app.include_router(workbench_context_routes.router, prefix="/api/v1")
 app.include_router(character_scheduler_routes.router, prefix="/api/v1")  # 角色调度服务
+app.include_router(vector_store_routes.router, prefix="/api/v1")
 
 # Audit module routes
 app.include_router(chapter_review_routes.router)

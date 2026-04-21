@@ -153,11 +153,11 @@ def _repair_json_string(text: str) -> str:
     return _close_json(text)
 
 
-def _parse_llm_json_to_dict(raw: str) -> Dict[str, Any]:
-    data = parse_json_from_response(raw)
-    if not isinstance(data, dict):
-        raise json.JSONDecodeError("Root node is not a JSON object", raw, 0)
-    return data
+def _parse_llm_json_to_dict(raw: str) -> tuple:
+    from application.ai.llm_json_extract import repair_json, parse_llm_json_to_dict as _parse
+    cleaned = repair_json(raw)
+    data, errs = _parse(cleaned)
+    return data, errs
 
 
 def _infer_character_importance(char_data: Dict[str, Any]) -> str:
@@ -351,6 +351,11 @@ class AutoBibleGenerator:
             logger.debug("Calling _generate_worldbuilding_and_style")
             # 只生成世界观和文风
             bible_data = await self._generate_worldbuilding_and_style(premise, target_chapters)
+            if not isinstance(bible_data, dict):
+                raise TypeError(
+                    f"_generate_worldbuilding_and_style returned {type(bible_data).__name__} instead of dict: "
+                    f"{str(bible_data)[:200]}"
+                )
             logger.debug("_generate_worldbuilding_and_style completed, keys=%s", list(bible_data.keys()))
             logger.debug("Has 'worldbuilding' key: %s, worldbuilding_service is None: %s", 'worldbuilding' in bible_data, self.worldbuilding_service is None)
             # 保存文风
@@ -966,16 +971,15 @@ JSON 格式：
         config = GenerationConfig(max_tokens=4096, temperature=0.7)
         result = await self.llm_service.generate(prompt, config)
 
-        content = ""
-        try:
-            content = _sanitize_llm_json_output(result.content)
-            return _parse_llm_json_to_dict(content)
-        except json.JSONDecodeError as e:
+        content = _sanitize_llm_json_output(result.content)
+        data, errs = _parse_llm_json_to_dict(content)
+        if data is None:
             logger.error(f"Content length: {len(content)}")
-            logger.error(f"Failed to parse JSON: {e}")
+            logger.error(f"JSON parse failed: {errs}")
             logger.error(f"Raw content (first 1000 chars): {content[:1000]}")
             logger.error(f"Raw content (last 500 chars): {content[-500:]}")
-            return {}
+            raise ValueError(f"JSON parse failed: {errs}")
+        return data
 
     async def _call_llm_and_parse_with_retry(
         self,
@@ -999,8 +1003,8 @@ JSON 格式：
                     retry_reminder = "\n\n【重要提醒】上次JSON解析失败，请严格遵守JSON输出规则！只输出纯JSON，不要任何其他文字！"
                     logger.warning(f"JSON解析重试 {attempt}/{attempts}，添加强调提示")
                     return await self._call_llm_and_parse(
-                        system_prompt + retry_reminder,
-                        user_prompt
+                        system_prompt,
+                        user_prompt + retry_reminder
                     )
             except json.JSONDecodeError as e:
                 last_error = e

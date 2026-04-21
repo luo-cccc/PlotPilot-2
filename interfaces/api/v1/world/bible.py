@@ -143,12 +143,22 @@ class BulkUpdateBibleRequest(BaseModel):
     style_notes: list[StyleNoteData] = Field(default_factory=list, description="风格笔记列表")
 
 
+class WizardPreferences(BaseModel):
+    """向导阶段用户偏好（可选，Step1 生成世界观时注入 prompt 增强方向性）"""
+    model_config = ConfigDict(extra="ignore")
+    genre_tags: list[str] = Field(default_factory=list, description="题材标签：fantasy/martial/urban/scifi/history/horror/game/romance")
+    tone_style: str = Field(default="", description="世界观基调：cyberpunk/post_apocalyptic/lovecraftian/steampunk/xianxia/eastern_fantasy/western_fantasy/near_future/dark_gothic/utopian/dystopian/war_torn/ancient_mysterious/urban_supernatural/space_scifi/low_magic_medieval/historical_wuxia/modern_urban/supernatural_urban/isekai")
+    conflict_preference: str = Field(default="", description="核心冲突偏好：revenge/politics/exploration/emotion/survival/war")
+    target_audience: str = Field(default="", description="目标读者：experienced/moderate/student")
+
+
 # Routes
 @router.post("/novels/{novel_id}/generate", status_code=202)
 async def generate_bible(
     novel_id: str,
     background_tasks: BackgroundTasks,
     stage: str = "all",  # all / worldbuilding / characters / locations
+    preferences: Optional[WizardPreferences] = None,
     bible_generator: AutoBibleGenerator = Depends(get_auto_bible_generator),
     knowledge_generator: AutoKnowledgeGenerator = Depends(get_auto_knowledge_generator)
 ):
@@ -194,7 +204,7 @@ async def generate_bible(
                 novel_id,
                 premise,
                 novel.target_chapters,
-                stage=stage
+                stage=stage,
             )
 
             # 构建 Bible 摘要供 Knowledge 生成使用

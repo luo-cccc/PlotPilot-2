@@ -26,6 +26,7 @@ from domain.ai.value_objects.prompt import Prompt
 
 if TYPE_CHECKING:
     from application.ai.llm_output_sanitize import strip_reasoning_artifacts
+else:
     from application.workflows.beat_continuation import format_prior_draft_for_prompt
 
 logger = logging.getLogger(__name__)

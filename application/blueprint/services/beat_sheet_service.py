@@ -71,19 +71,30 @@ class BeatSheetService:
 
         # 3. 调用 LLM 生成节拍表
         config = GenerationConfig(max_tokens=2048, temperature=0.7)
-        response = await self.llm_service.generate(prompt, config)
+        try:
+            response = await self.llm_service.generate(prompt, config)
+            scenes = self._parse_llm_response(response)
+        except Exception as e:
+            logger.warning(f"Beat sheet LLM 生成失败，使用默认节拍表: {e}")
+            scenes = [
+                Scene(
+                    title=f"场景 {i+1}",
+                    goal="（LLM 生成失败，使用默认节拍）",
+                    pov_character="主角",
+                    location=None,
+                    tone=None,
+                    estimated_words=800,
+                    order_index=i,
+                )
+                for i in range(3)
+            ]
 
-        # 4. 解析响应
-        scenes = self._parse_llm_response(response)
-
-        # 5. 创建节拍表实体
         beat_sheet = BeatSheet(
             id=str(uuid.uuid4()),
             chapter_id=chapter_id,
             scenes=scenes
         )
 
-        # 6. 保存到仓储
         await self.beat_sheet_repo.save(beat_sheet)
 
         logger.info(f"Beat sheet generated with {len(scenes)} scenes")

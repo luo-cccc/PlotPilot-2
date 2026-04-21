@@ -71,7 +71,20 @@
         </div>
       </n-dropdown>
 
-      <!-- 设置按钮 -->
+      <n-dropdown
+        trigger="click"
+        placement="bottom-end"
+        :options="systemOptions"
+        @select="handleSystemAction"
+      >
+        <div class="action-trigger" role="button" aria-label="系统维护">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20">
+            <path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 15v-4H9l4-6v4h4l-4 6h-2z"/>
+          </svg>
+        </div>
+      </n-dropdown>
+
+设置按钮 -->
       <div class="settings-trigger" @click="$emit('open-settings')" role="button" aria-label="打开设置">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18">
           <path fill="currentColor" d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z"/>
@@ -83,11 +96,12 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { NTooltip, NSpin, NDropdown, NButton, useMessage } from 'naive-ui'
+import { NTooltip, NSpin, NDropdown, NButton, useMessage, useDialog } from 'naive-ui'
 import { useStatsStore } from '@/stores/statsStore'
 import { novelApi } from '@/api/novel'
 import GlobalLLMEntryButton from '@/components/global/GlobalLLMEntryButton.vue'
 import PromptPlazaEntryButton from '@/components/global/PromptPlazaEntryButton.vue'
+import { vectorStoreApi } from '@/api/vectorStore'
 
 const props = defineProps<{
   slug: string
@@ -144,6 +158,84 @@ async function handleExport(format: string) {
     console.error('导出失败:', error)
     message.error('导出失败，请稍后重试')
   }
+}
+
+const systemOptions = [
+  { label: '🗑️ 清理向量数据库', key: 'clear-vector' },
+  { label: '🤖 清理嵌入模型缓存', key: 'clear-embed-cache' },
+  { label: '💥 一键清理全部', key: 'clear-all' },
+]
+
+const dialog = useDialog()
+
+async function handleClearVectorStore() {
+  dialog.warning({
+    title: '确认清理',
+    content: '确定要删除所有向量 collection 吗？此操作不可恢复。',
+    positiveText: '确认清理',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        message.info('正在清理向量数据库...')
+        const result = await vectorStoreApi.clearAll()
+        message.success(`已清理 ${result.total} 个 collection`)
+      } catch (error) {
+        console.error('清理向量数据库失败:', error)
+        message.error('清理失败，请稍后重试')
+      }
+    },
+  })
+}
+
+function handleSystemAction(key: string) {
+  if (key === 'clear-vector') {
+    handleClearVectorStore()
+  } else if (key === 'clear-embed-cache') {
+    handleClearEmbedCache()
+  } else if (key === 'clear-all') {
+    handleClearAll()
+  }
+}
+
+async function handleClearEmbedCache() {
+  dialog.warning({
+    title: '确认清理',
+    content: '确定要清理嵌入模型缓存吗？清理后再次生成向量时需重新下载模型。',
+    positiveText: '确认清理',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        message.info('正在清理嵌入模型缓存...')
+        const result = await vectorStoreApi.clearEmbeddingCache()
+        const cleared = result.cleared.length
+        message.success(`已清理 ${cleared} 个缓存目录`)
+      } catch (error) {
+        console.error('清理嵌入模型缓存失败:', error)
+        message.error('清理失败，请稍后重试')
+      }
+    },
+  })
+}
+
+async function handleClearAll() {
+  dialog.warning({
+    title: '确认一键清理',
+    content: '确定要清理所有向量数据和嵌入模型缓存吗？此操作不可恢复。',
+    positiveText: '确认清理',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        message.info('正在一键清理...')
+        const result = await vectorStoreApi.clearAllWithCache()
+        const vcCount = result.vector_collections?.deleted?.length ?? 0
+        const cacheOk = result.embedding_cache?.cleared ? '✅' : '❌'
+        message.success(`已清理：${vcCount} 个向量 collection，嵌入缓存 ${cacheOk}`)
+      } catch (error) {
+        console.error('一键清理失败:', error)
+        message.error('清理失败，请稍后重试')
+      }
+    },
+  })
 }
 
 const statsStore = useStatsStore()

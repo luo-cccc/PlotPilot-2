@@ -63,6 +63,12 @@ export interface AddCharacterRequest {
   description: string
 }
 
+export interface WizardPreferences {
+  genre_tags?: string[]
+  conflict_preference?: string
+  target_audience?: string
+}
+
 export const bibleApi = {
   /**
    * Create bible for a novel
@@ -126,10 +132,10 @@ export const bibleApi = {
    * POST /api/v1/bible/novels/{novelId}/generate
    */
   /** 后端 202 即返回；冷启动、远程网关或本地代理较慢时需留足握手时间（引导页默认 400s） */
-  generateBible: (novelId: string, stage: string = 'all') =>
+  generateBible: (novelId: string, stage: string = 'all', preferences?: WizardPreferences) =>
     apiClient.post<{ message: string; novel_id: string; status_url: string }>(
       `/bible/novels/${novelId}/generate?stage=${stage}`,
-      {},
+      preferences ?? {},
       { timeout: WIZARD_STEP_TIMEOUT_MS }
     ) as Promise<{ message: string; novel_id: string; status_url: string }>,
 
