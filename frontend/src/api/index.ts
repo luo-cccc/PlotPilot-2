@@ -13,6 +13,8 @@ export * from './bible'
 export * from './workflow'
 export * from './chronicles'
 export * from './vectorStore'
+export * from './autopilot'
+export * from './worldbuilding'
 
 // Legacy API exports
 export * from './stats'

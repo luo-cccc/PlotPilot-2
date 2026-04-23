@@ -84,7 +84,7 @@ import { ref, computed, h, onMounted, watch } from 'vue'
 import { NTree, NEmpty, NSpin, NTag, NButton, NSpace, NDropdown, NModal, NInput, useMessage, useDialog } from 'naive-ui'
 import { structureApi, type StoryNode } from '@/api/structure'
 import { chapterApi } from '@/api/chapter'
-import { resolveHttpUrl } from '@/api/config'
+import { autopilotApi } from '@/api/autopilot'
 
 const props = defineProps<{
   slug: string
@@ -235,12 +235,7 @@ async function syncAutopilotEmptyHint(hasTreeData: boolean) {
     return
   }
   try {
-    const r = await fetch(resolveHttpUrl(`/api/v1/autopilot/${props.slug}/status`))
-    if (!r.ok) {
-      autopilotEmptyMode.value = null
-      return
-    }
-    const s = await r.json()
+    const s = await autopilotApi.getStatus(props.slug)
     if (s.autopilot_status !== 'running') {
       autopilotEmptyMode.value = null
       return

@@ -32,7 +32,6 @@ from interfaces.api.dependencies import (
     get_setup_main_plot_suggestion_service,
     get_chapter_review_service,
 )
-# from application.services.story_structure_ai_service import StoryStructureAIService  # 已废弃，使用 ContinuousPlanningService
 from application.blueprint.services.continuous_planning_service import ContinuousPlanningService
 from infrastructure.persistence.database.story_node_repository import StoryNodeRepository
 from infrastructure.persistence.database.chapter_element_repository import ChapterElementRepository
@@ -41,20 +40,6 @@ from application.world.services.auto_bible_generator import AutoBibleGenerator
 from application.world.services.auto_knowledge_generator import AutoKnowledgeGenerator
 
 router = APIRouter(prefix="/novels", tags=["generation"])
-
-
-# 已废弃：StoryStructureAIService 已被 ContinuousPlanningService 替代
-# def get_structure_ai_service() -> StoryStructureAIService:
-#     """获取叙事结构 AI 服务"""
-#     db_path = str(DATA_DIR / "aitext.db")
-#     repository = StoryNodeRepository(db_path)
-#
-#     from application.world.services.bible_service import BibleService
-#     from interfaces.api.dependencies import get_bible_repository
-#
-#     bible_service = BibleService(get_bible_repository())
-#
-#     return StoryStructureAIService(repository, llm_service=None, bible_service=bible_service)
 
 
 def get_continuous_planning_service() -> ContinuousPlanningService:

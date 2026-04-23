@@ -48,7 +48,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { NTag } from 'naive-ui'
-import { resolveHttpUrl } from '@/api/config'
+import { autopilotApi } from '@/api/autopilot'
 
 const props = defineProps<{ novelId: string }>()
 
@@ -298,8 +298,7 @@ function onScroll() {
 
 function connect() {
   if (eventSource) eventSource.close()
-  const q = lastLogSeq.value > 0 ? `?after_seq=${lastLogSeq.value}` : ''
-  const url = resolveHttpUrl(`/api/v1/autopilot/${props.novelId}/stream${q}`)
+  const url = autopilotApi.streamUrl(props.novelId, lastLogSeq.value > 0 ? lastLogSeq.value : undefined)
   eventSource = new EventSource(url)
 
   eventSource.onopen = () => {

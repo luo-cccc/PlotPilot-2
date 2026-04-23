@@ -457,7 +457,7 @@
 <script setup lang="ts">
 import { ref, watch, computed, onMounted, onUnmounted } from 'vue'
 import { useMessage } from 'naive-ui'
-import { resolveHttpUrl } from '../../api/config'
+import { autopilotApi } from '../../api/autopilot'
 import {
   consumeGenerateChapterStream,
   analyzeScene,
@@ -538,7 +538,7 @@ const isAssistedReadOnly = computed(
 /** 与左侧章节「已收稿」、结构树同步：全托管推进时刷新 desk（首次快照只记录不 emit，避免与进入页重复请求） */
 const lastAutopilotDeskSnap = ref<string | null>(null)
 
-function deskSnapFromAutopilot(status: Record<string, unknown> | null | undefined): string {
+function deskSnapFromAutopilot(status: any): string {
   if (!status) return ''
   const s = status
   return [
@@ -554,7 +554,7 @@ function deskSnapFromAutopilot(status: Record<string, unknown> | null | undefine
   ].join('|')
 }
 
-function maybeEmitDeskRefresh(status: Record<string, unknown> | null | undefined) {
+function maybeEmitDeskRefresh(status: any) {
   const next = deskSnapFromAutopilot(status)
   if (next === '') return
   if (lastAutopilotDeskSnap.value === null) {
@@ -622,19 +622,15 @@ function handleVisibilityChange() {
 async function pollAutopilotStatusWhileAssisted() {
   if (assistedAutopilot404) return
   try {
-    const res = await fetch(resolveHttpUrl(`/api/v1/autopilot/${props.slug}/status`))
-    if (res.status === 404) {
+    const json = await autopilotApi.getStatus(props.slug)
+    autopilotStatus.value = json
+    maybeEmitDeskRefresh(json)
+  } catch (e: any) {
+    if (e?.response?.status === 404) {
       assistedAutopilot404 = true
       clearAssistedAutopilotPoll()
-      return
     }
-    if (res.ok) {
-      const json = await res.json()
-      autopilotStatus.value = json
-      maybeEmitDeskRefresh(json)
-    }
-  } catch {
-    /* 忽略 */
+    /* 其他错误忽略 */
   }
 }
 

@@ -88,7 +88,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
-import { resolveHttpUrl } from '@/api/config'
+import { monitorApi } from '@/api/monitor'
 
 interface VoiceDriftData {
   drift_score: number
@@ -189,27 +189,22 @@ const driftDetails = computed(() => driftData.value?.details ?? [])
 async function loadDriftData() {
   loading.value = true
   try {
-    const res = await fetch(
-      resolveHttpUrl(`/api/v1/novels/${props.novelId}/monitor/voice-drift`),
-    )
-    if (res.ok) {
-      const dataArray = await res.json()
-      // 取第一个角色的数据（或者可以聚合多个角色）
-      if (dataArray && dataArray.length > 0) {
-        const firstChar = dataArray[0]
-        // 转换新 API 格式到组件格式
-        driftData.value = {
-          drift_score: firstChar.drift_score * 10, // 转换 0-1 到 0-10
-          status: firstChar.status === 'critical' ? 'danger' : firstChar.status === 'warning' ? 'warning' : 'safe',
-          last_check_chapter: 0, // API 暂不提供
-          last_check_time: new Date().toISOString(),
-          details: []
-        }
+    const dataArray = await monitorApi.getVoiceDrift(props.novelId)
+    // 取第一个角色的数据（或者可以聚合多个角色）
+    if (dataArray && dataArray.length > 0) {
+      const firstChar = dataArray[0]
+      // 转换新 API 格式到组件格式
+      driftData.value = {
+        drift_score: firstChar.drift_score * 10, // 转换 0-1 到 0-10
+        status: firstChar.status === 'critical' ? 'danger' : firstChar.status === 'warning' ? 'warning' : 'safe',
+        last_check_chapter: 0, // API 暂不提供
+        last_check_time: new Date().toISOString(),
+        details: []
+      }
 
-        // 触发警报
-        if (isDanger.value || isWarning.value) {
-          emit('drift-alert', driftScore.value, driftStatus.value)
-        }
+      // 触发警报
+      if (isDanger.value || isWarning.value) {
+        emit('drift-alert', driftScore.value, driftStatus.value)
       }
     }
   } catch (err) {

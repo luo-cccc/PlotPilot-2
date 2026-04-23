@@ -793,9 +793,7 @@ class PromptManager:
         if not template:
             return ""
 
-        class SafeDict(dict):
-            def __missing__(self, key):
-                return "{" + key + "}"
+        from .safe_format import SafeDict
 
         try:
             return template.format_map(SafeDict(variables))

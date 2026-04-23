@@ -10,7 +10,7 @@ from application.audit.services.chapter_review_service import ChapterReviewServi
 from interfaces.api.dependencies import get_chapter_review_service
 
 
-router = APIRouter(prefix="/chapter-reviews", tags=["chapter-reviews"])
+router = APIRouter(prefix="/api/v1/chapter-reviews", tags=["chapter-reviews"])
 
 
 class ConsistencyIssueResponse(BaseModel):

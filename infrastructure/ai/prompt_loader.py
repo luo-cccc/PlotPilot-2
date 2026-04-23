@@ -156,9 +156,7 @@ class PromptLoader:
         if not raw or not variables:
             return raw
 
-        class SafeDict(dict):
-            def __missing__(self, key: str) -> str:
-                return "{" + key + "}"
+        from .safe_format import SafeDict
 
         try:
             return raw.format_map(SafeDict(variables))

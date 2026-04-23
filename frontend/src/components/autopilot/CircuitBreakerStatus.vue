@@ -123,21 +123,9 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
-import { resolveHttpUrl } from '@/api/config'
+import { autopilotApi, type CircuitBreakerStatus } from '@/api/autopilot'
 
-interface ErrorRecord {
-  message: string
-  timestamp: string
-  context?: string
-}
 
-interface CircuitBreakerData {
-  status: 'closed' | 'open' | 'half_open'
-  error_count: number
-  max_errors: number
-  last_error?: ErrorRecord
-  error_history?: ErrorRecord[]
-}
 
 const props = defineProps<{
   novelId: string
@@ -148,7 +136,7 @@ const emit = defineEmits<{
   'breaker-reset': []
 }>()
 
-const breakerData = ref<CircuitBreakerData>({
+const breakerData = ref<CircuitBreakerStatus>({
   status: 'closed',
   error_count: 0,
   max_errors: 3
@@ -231,22 +219,20 @@ const statusSubtext = computed(() => {
 async function loadBreakerData() {
   loading.value = true
   try {
-    const res = await fetch(
-      resolveHttpUrl(`/api/v1/autopilot/${props.novelId}/circuit-breaker`),
-    )
-    if (res.status === 404) {
-      stopPolling()
-      pollStopped404 = true
-      return
-    }
-    if (res.ok) {
-      const data = await res.json()
+    try {
+      const data = await autopilotApi.getCircuitBreaker(props.novelId)
       const prevStatus = breakerData.value.status
       breakerData.value = data
 
       // 触发熔断事件
       if (prevStatus !== 'open' && data.status === 'open') {
         emit('breaker-open')
+      }
+    } catch (e: any) {
+      if (e.response?.status === 404) {
+        stopPolling()
+        pollStopped404 = true
+        return
       }
     }
   } catch (err) {
@@ -259,17 +245,10 @@ async function loadBreakerData() {
 // 重置熔断器
 async function handleReset() {
   try {
-    const res = await fetch(
-      resolveHttpUrl(`/api/v1/autopilot/${props.novelId}/circuit-breaker/reset`),
-      { method: 'POST' },
-    )
-    if (res.ok) {
-      await loadBreakerData()
-      emit('breaker-reset')
-      window.$message?.success('熔断器已重置')
-    } else {
-      window.$message?.error('重置失败')
-    }
+    await autopilotApi.resetCircuitBreaker(props.novelId)
+    await loadBreakerData()
+    emit('breaker-reset')
+    window.$message?.success('熔断器已重置')
   } catch (err) {
     console.error('Failed to reset circuit breaker:', err)
     window.$message?.error('重置失败')

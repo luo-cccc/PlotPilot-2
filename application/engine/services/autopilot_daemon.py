@@ -13,6 +13,7 @@ import asyncio
 import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+from dataclasses import dataclass
 
 from domain.novel.entities.novel import Novel, NovelStage, AutopilotStatus
 from domain.novel.entities.chapter import ChapterStatus
@@ -50,6 +51,26 @@ VOICE_REWRITE_THRESHOLD = 0.68
 VOICE_WARNING_THRESHOLD_FALLBACK = 0.75
 
 
+
+@dataclass
+class AutopilotServices:
+    """可选服务容器：将 AutopilotDaemon 的 8 个可选依赖打包为 1 个对象。
+    
+    降低 __init__ 参数爆炸，同时保持 backward compatible。
+    新调用方可通过 services=AutopilotServices(...) 传入，
+    旧调用方仍可直接传 keyword args。
+    """
+    voice_drift_service: Any = None
+    circuit_breaker: Any = None
+    chapter_workflow: Optional[Any] = None
+    aftermath_pipeline: Optional[Any] = None
+    volume_summary_service: Any = None
+    foreshadowing_repository: Any = None
+    beat_sheet_service: Any = None
+    scene_director_service: Any = None
+    orchestrator: Any = None
+
+
 class AutopilotDaemon:
     """自动驾驶守护进程（v2 完整实现）"""
 
@@ -71,6 +92,7 @@ class AutopilotDaemon:
         foreshadowing_repository=None,
         beat_sheet_service=None,
         scene_director_service=None,
+        services: Optional[AutopilotServices] = None,
     ):
         self.novel_repository = novel_repository
         self.llm_service = llm_service
@@ -80,15 +102,27 @@ class AutopilotDaemon:
         self.story_node_repo = story_node_repo
         self.chapter_repository = chapter_repository
         self.poll_interval = poll_interval
-        self.voice_drift_service = voice_drift_service
-        self.circuit_breaker = circuit_breaker
-        self.chapter_workflow = chapter_workflow
-        self.aftermath_pipeline = aftermath_pipeline
-        self.volume_summary_service = volume_summary_service
-        self.foreshadowing_repository = foreshadowing_repository
-        self.beat_sheet_service = beat_sheet_service
-        self.scene_director_service = scene_director_service
-        self.orchestrator = None  # 多模型编排器（可选，暂未启用）
+        # services 容器优先：新调用方通过 services=AutopilotServices(...) 传入
+        if services is not None:
+            self.voice_drift_service = services.voice_drift_service
+            self.circuit_breaker = services.circuit_breaker
+            self.chapter_workflow = services.chapter_workflow
+            self.aftermath_pipeline = services.aftermath_pipeline
+            self.volume_summary_service = services.volume_summary_service
+            self.foreshadowing_repository = services.foreshadowing_repository
+            self.beat_sheet_service = services.beat_sheet_service
+            self.scene_director_service = services.scene_director_service
+            self.orchestrator = services.orchestrator
+        else:
+            self.voice_drift_service = voice_drift_service
+            self.circuit_breaker = circuit_breaker
+            self.chapter_workflow = chapter_workflow
+            self.aftermath_pipeline = aftermath_pipeline
+            self.volume_summary_service = volume_summary_service
+            self.foreshadowing_repository = foreshadowing_repository
+            self.beat_sheet_service = beat_sheet_service
+            self.scene_director_service = scene_director_service
+            self.orchestrator = None  # 多模型编排器（可选，暂未启用）
 
         # 惰性初始化 VolumeSummaryService
         if not self.volume_summary_service and llm_service and story_node_repo:

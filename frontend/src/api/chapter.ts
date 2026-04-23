@@ -43,8 +43,8 @@ export const chapterApi = {
    * List all chapters for a novel
    * GET /api/v1/novels/{novelId}/chapters
    */
-  listChapters: (novelId: string) =>
-    apiClient.get<ChapterDTO[]>(`/novels/${novelId}/chapters`) as Promise<ChapterDTO[]>,
+  listChapters: (novelId: string, params?: { status?: string; limit?: number }) =>
+    apiClient.get<ChapterDTO[]>(`/novels/${novelId}/chapters`, { params }) as Promise<ChapterDTO[]>,
 
   /**
    * Get a specific chapter by number

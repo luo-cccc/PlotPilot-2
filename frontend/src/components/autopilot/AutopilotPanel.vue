@@ -180,6 +180,8 @@ import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useMessage } from 'naive-ui'
 import AutopilotWritingStream from './AutopilotWritingStream.vue'
 import { resolveHttpUrl, subscribeChapterStream } from '../../api/config'
+import { autopilotApi } from '../../api/autopilot'
+import { novelApi } from '../../api/novel'
 
 const props = defineProps({ novelId: String })
 const emit = defineEmits(['status-change', 'chapter-content-update', 'chapter-start', 'chapter-chunk'])
@@ -288,19 +290,17 @@ function formatWords(n) {
 }
 
 // API 调用（路径须经 resolveHttpUrl，桌面壳下不能用相对 /api）
-const autopilotApiRoot = () => `/api/v1/autopilot/${props.novelId}`
-
 async function fetchStatus() {
-  const res = await fetch(resolveHttpUrl(`${autopilotApiRoot()}/status`))
-  if (res.status === 404) {
-    clearStatusPoll()
-    status.value = null
-    statusPollDisabled.value = true
-    return
-  }
-  if (res.ok) {
-    status.value = await res.json()
-    emit('status-change', status.value)
+  try {
+    const data = await autopilotApi.getStatus(props.novelId)
+    status.value = data
+    emit('status-change', data)
+  } catch (e) {
+    if (e.response?.status === 404) {
+      clearStatusPoll()
+      status.value = null
+      statusPollDisabled.value = true
+    }
   }
 }
 
@@ -372,48 +372,29 @@ async function start() {
     }
 
     if (Object.keys(novelPatch).length > 0) {
-      const updateRes = await fetch(resolveHttpUrl(`/api/v1/novels/${props.novelId}`), {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(novelPatch),
-        },
-      )
-      if (!updateRes.ok) {
+      try {
+        await novelApi.updateNovel(props.novelId, novelPatch)
+      } catch {
         message.error('更新书目目标章数或每章字数失败')
         return
       }
     }
 
     if (currentAutoApprove !== newAutoApprove) {
-      const approveRes = await fetch(
-        resolveHttpUrl(`/api/v1/novels/${props.novelId}/auto-approve-mode`),
-        {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            auto_approve_mode: newAutoApprove,
-          }),
-        },
-      )
-      if (!approveRes.ok) {
+      try {
+        await novelApi.updateAutoApproveMode(props.novelId, newAutoApprove)
+      } catch {
         message.error('更新全自动模式失败')
         return
       }
     }
     
     // 然后启动自动驾驶
-    const res = await fetch(resolveHttpUrl(`${autopilotApiRoot()}/start`), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        max_auto_chapters: startConfig.value.max_auto_chapters,
-      }),
+    await autopilotApi.start(props.novelId, {
+      max_auto_chapters: startConfig.value.max_auto_chapters,
     })
-    if (res.ok) {
-      const modeText = startConfig.value.auto_approve_mode ? '（全自动模式）' : ''
-      message.success(`自动驾驶已启动${modeText}`)
-    }
-    else message.error('启动失败')
+    const modeText = startConfig.value.auto_approve_mode ? '（全自动模式）' : ''
+    message.success(`自动驾驶已启动${modeText}`)
     await fetchStatus()
   } finally {
     toggling.value = false
@@ -422,9 +403,7 @@ async function start() {
 
 async function stop() {
   toggling.value = true
-  await fetch(resolveHttpUrl(`${autopilotApiRoot()}/stop`), {
-    method: 'POST',
-  })
+  await autopilotApi.stop(props.novelId)
   message.info('已停止')
   await fetchStatus()
   toggling.value = false
@@ -432,11 +411,12 @@ async function stop() {
 
 async function resume() {
   toggling.value = true
-  const res = await fetch(resolveHttpUrl(`${autopilotApiRoot()}/resume`), {
-    method: 'POST',
-  })
-  if (res.ok) message.success('已确认大纲，开始写作')
-  else { const e = await res.json(); message.error(e.detail || '恢复失败') }
+  try {
+    await autopilotApi.resume(props.novelId)
+    message.success('已确认大纲，开始写作')
+  } catch (e) {
+    message.error(e.response?.data?.detail || '恢复失败')
+  }
   await fetchStatus()
   toggling.value = false
 }
@@ -444,16 +424,11 @@ async function resume() {
 async function clearCircuitBreaker() {
   toggling.value = true
   try {
-    const res = await fetch(
-      resolveHttpUrl(`${autopilotApiRoot()}/circuit-breaker/reset`),
-      { method: 'POST' },
-    )
-    if (res.ok) {
-      message.success('已解除挂起并清零失败计数，可重新启动全托管')
-      await fetchStatus()
-    } else {
-      message.error('操作失败，请确认后端已更新并稍后重试')
-    }
+    await autopilotApi.resetCircuitBreaker(props.novelId)
+    message.success('已解除挂起并清零失败计数，可重新启动全托管')
+    await fetchStatus()
+  } catch {
+    message.error('操作失败，请确认后端已更新并稍后重试')
   } finally {
     toggling.value = false
   }
