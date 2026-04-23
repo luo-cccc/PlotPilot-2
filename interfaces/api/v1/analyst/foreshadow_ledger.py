@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 from datetime import datetime
 from dataclasses import replace
 
-from domain.novel.repositories.foreshadowing_repository import ForeshadowingRepository
+from domain.novel.repositories import ForeshadowingRepository
 from domain.novel.entities.subtext_ledger_entry import SubtextLedgerEntry
 from domain.novel.value_objects.novel_id import NovelId
 from domain.shared.exceptions import InvalidOperationError

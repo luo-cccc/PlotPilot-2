@@ -10,8 +10,8 @@ import tempfile
 from pathlib import Path
 from typing import Iterator, List, Optional, Tuple
 
-from domain.novel.repositories.novel_repository import NovelRepository
-from domain.novel.repositories.chapter_repository import ChapterRepository
+from domain.novel.repositories import NovelRepository
+from domain.novel.repositories import ChapterRepository
 from domain.novel.entities.novel import Novel
 from domain.novel.entities.chapter import Chapter
 from domain.novel.value_objects.novel_id import NovelId

@@ -46,11 +46,11 @@ def resolve_autopilot_current_chapter_number(chapters) -> Optional[int]:
     return None
 
 
-def _has_chapter_nodes_under_current_act(novel_id: str, current_act_zero_based: int) -> bool:
+async def _has_chapter_nodes_under_current_act(novel_id: str, current_act_zero_based: int) -> bool:
     """当前幕（0-based）下是否已有章节结构节点。有则确认审阅后应直接 WRITING，避免再次跑幕级规划并重复弹确认。"""
     repo = StoryNodeRepository(get_db_path())
     target_act_number = (current_act_zero_based or 0) + 1
-    all_nodes = repo.get_by_novel_sync(novel_id)
+    all_nodes = await repo.get_by_novel(novel_id)
     act_nodes = sorted(
         [
             n
@@ -62,18 +62,18 @@ def _has_chapter_nodes_under_current_act(novel_id: str, current_act_zero_based: 
     target = next((n for n in act_nodes if n.number == target_act_number), None)
     if not target:
         return False
-    for ch in repo.get_children_sync(target.id):
+    for ch in await repo.get_children(target.id):
         t = ch.node_type.value if hasattr(ch.node_type, "value") else str(ch.node_type)
         if t == "chapter":
             return True
     return False
 
 
-def _stage_after_review(novel) -> NovelStage:
+async def _stage_after_review(novel) -> NovelStage:
     """审阅确认后的下一阶段：幕下已有章节点 → 写作；否则 → 幕级规划（含宏观审阅后尚未规划章节的情况）。"""
     nid = novel.novel_id.value if hasattr(novel.novel_id, "value") else str(novel.novel_id)
     ca = getattr(novel, "current_act", 0) or 0
-    if _has_chapter_nodes_under_current_act(nid, ca):
+    if await _has_chapter_nodes_under_current_act(nid, ca):
         return NovelStage.WRITING
     return NovelStage.ACT_PLANNING
 router = APIRouter(prefix="/autopilot", tags=["autopilot"])
@@ -130,7 +130,7 @@ async def start_autopilot(novel_id: str, body: StartRequest = StartRequest()):
 
     # 如果之前处于审阅等待：幕下已有章节节点则直接写作，否则幕级规划（避免重复弹确认）
     if novel.current_stage == NovelStage.PAUSED_FOR_REVIEW:
-        novel.current_stage = _stage_after_review(novel)
+        novel.current_stage = await _stage_after_review(novel)
 
     repo.save(novel)
     return {
@@ -239,7 +239,6 @@ async def get_autopilot_status(novel_id: str):
         # 与 /autopilot/{id}/stream 中 chapter_label、progress 元数据同源，便于驾驶舱与实时日志对齐
         "current_chapter_number": current_chapter_number,
         "needs_review": novel.current_stage.value == "paused_for_review",
-        "auto_approve_mode": getattr(novel, "auto_approve_mode", False),
         "last_chapter_audit": last_chapter_audit,
     }
 

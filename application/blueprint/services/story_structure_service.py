@@ -15,7 +15,7 @@ from infrastructure.persistence.database.story_node_repository import StoryNodeR
 
 if TYPE_CHECKING:
     from application.novel.chapter_renumber.coordinator import ChapterRenumberCoordinator
-    from domain.novel.repositories.chapter_repository import ChapterRepository
+    from domain.novel.repositories import ChapterRepository
     from application.blueprint.services.continuous_planning_service import ContinuousPlanningService
 
 

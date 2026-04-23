@@ -5,7 +5,7 @@ from typing import Any, Dict
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from application.workbench.workbench_context_service import build_workbench_context_bundle
-from domain.novel.repositories.plot_arc_repository import PlotArcRepository
+from domain.novel.repositories import PlotArcRepository
 from infrastructure.persistence.database.triple_repository import TripleRepository
 from interfaces.api.dependencies import (
     get_bible_service,

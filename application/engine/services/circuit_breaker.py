@@ -37,6 +37,7 @@ class CircuitBreaker:
                     logger.info("[CircuitBreaker] → HALF_OPEN，开始试探")
                     self._state = BreakerState.HALF_OPEN
                     self._success_count = 0
+                    self._failure_count = 0
                     return False  # 放行试探
                 return True  # 仍在断开期
             return False

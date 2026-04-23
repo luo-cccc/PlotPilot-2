@@ -1,16 +1,3 @@
-"""Character ID value object"""
-from dataclasses import dataclass
+from domain.cast.value_objects import CharacterId
 
-
-@dataclass(frozen=True)
-class CharacterId:
-    """Character ID value object"""
-
-    value: str
-
-    def __post_init__(self):
-        if not self.value or not self.value.strip():
-            raise ValueError("Character ID cannot be empty")
-
-    def __str__(self) -> str:
-        return self.value
+__all__ = ["CharacterId"]

@@ -92,10 +92,15 @@ class DynamicLLMService(LLMService):
         if temperature == _DEFAULT_CONFIG.temperature:
             temperature = settings.default_temperature
 
+        timeout_seconds = config.timeout_seconds
+        if timeout_seconds is None:
+            timeout_seconds = settings.timeout_seconds
+
         return GenerationConfig(
             model=model,
             max_tokens=max_tokens,
             temperature=temperature,
+            timeout_seconds=timeout_seconds,
         )
 
     async def generate(self, prompt: Prompt, config: GenerationConfig) -> GenerationResult:

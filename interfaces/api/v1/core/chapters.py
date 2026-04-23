@@ -16,6 +16,7 @@ from interfaces.api.dependencies import (
     get_chapter_service,
     get_novel_service,
     get_chapter_aftermath_pipeline,
+    get_chapter_review_service,
 )
 from domain.shared.exceptions import EntityNotFoundError
 logger = logging.getLogger(__name__)
@@ -267,7 +268,8 @@ async def save_chapter_review(
 async def ai_review_chapter(
     novel_id: str,
     chapter_number: int = Path(..., gt=0, description="章节编号"),
-    service: ChapterService = Depends(get_chapter_service)
+    service: ChapterService = Depends(get_chapter_service),
+    review_service = Depends(get_chapter_review_service),
 ):
     """AI 审阅章节
 
@@ -275,6 +277,7 @@ async def ai_review_chapter(
         novel_id: 小说 ID
         chapter_number: 章节号
         service: Chapter 服务
+        review_service: 审阅服务
 
     Returns:
         AI 审阅结果
@@ -292,12 +295,9 @@ async def ai_review_chapter(
         if not chapter.content or not chapter.content.strip():
             raise HTTPException(status_code=400, detail="Chapter content is empty")
 
-        # TODO: 实现 AI 审阅逻辑
-        # 这里需要集成 LLM 服务进行审阅
-        return {
-            "message": "AI review not yet implemented",
-            "status": "pending"
-        }
+        # 调用 ChapterReviewService 进行 AI 审阅
+        result = await review_service.review_chapter(novel_id, chapter_number)
+        return result.to_dict()
     except EntityNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 

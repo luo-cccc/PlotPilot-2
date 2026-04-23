@@ -125,42 +125,29 @@ class ThemeAgentRegistry:
         return genre_key in self._agents
 
     def auto_discover(self) -> int:
-        """自动发现并注册 agents/ 目录下的所有内置题材 Agent
+        """自动发现并注册 configs/ 目录下的所有内置题材配置
 
-        扫描 application.engine.theme.agents 包下所有模块，
-        找到 ThemeAgent 的子类并实例化注册。
+        扫描 application/engine/theme/configs/ 目录下的 *.json 文件，
+        通过 ConfigThemeAgent 加载并注册。
 
         Returns:
             成功注册的 Agent 数量
         """
+        import os
+        from application.engine.theme.config_theme_agent import ConfigThemeAgent
+
         count = 0
+        configs_dir = os.path.join(
+            os.path.dirname(__file__), "configs"
+        )
 
-        # (module_name, class_name, display_name)
-        _BUILTIN_AGENTS = [
-            ("xuanhuan_agent", "XuanhuanThemeAgent", "玄幻"),
-            ("dushi_agent", "DushiThemeAgent", "都市"),
-            ("scifi_agent", "ScifiThemeAgent", "科幻"),
-            ("history_agent", "HistoryThemeAgent", "历史"),
-            ("wuxia_agent", "WuxiaThemeAgent", "武侠"),
-            ("xianxia_agent", "XianxiaThemeAgent", "仙侠"),
-            ("fantasy_agent", "FantasyThemeAgent", "奇幻"),
-            ("game_agent", "GameThemeAgent", "游戏"),
-            ("suspense_agent", "SuspenseThemeAgent", "悬疑"),
-            ("romance_agent", "RomanceThemeAgent", "言情"),
-            ("other_agent", "OtherThemeAgent", "其他"),
-        ]
+        if not os.path.isdir(configs_dir):
+            logger.warning(f"题材配置目录不存在：{configs_dir}")
+            return 0
 
-        import importlib
-        for module_name, class_name, display_name in _BUILTIN_AGENTS:
-            try:
-                mod = importlib.import_module(
-                    f"application.engine.theme.agents.{module_name}"
-                )
-                cls = getattr(mod, class_name)
-                self.register(cls())
-                count += 1
-            except Exception as e:
-                logger.warning(f"加载{display_name}题材 Agent 失败：{e}")
+        for agent in ConfigThemeAgent.load_all_from_dir(configs_dir):
+            self.register(agent)
+            count += 1
 
         logger.info(f"自动发现完成，共注册 {count} 个题材 Agent")
         return count

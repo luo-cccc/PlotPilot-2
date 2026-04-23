@@ -16,11 +16,11 @@ import logging
 import os
 
 from domain.novel.entities.chapter import Chapter
-from domain.novel.repositories.chapter_repository import ChapterRepository
-from domain.cast.repositories.cast_repository import CastRepository
-from domain.novel.repositories.timeline_repository import TimelineRepository
-from domain.novel.repositories.storyline_repository import StorylineRepository
-from domain.novel.repositories.foreshadowing_repository import ForeshadowingRepository
+from domain.novel.repositories import ChapterRepository
+from domain.world.repositories import CastRepository
+from domain.novel.repositories import TimelineRepository
+from domain.novel.repositories import StorylineRepository
+from domain.novel.repositories import ForeshadowingRepository
 from application.ai.llm_json_extract import parse_llm_json_to_dict
 from domain.ai.services.llm_service import LLMService, GenerationConfig
 from domain.ai.value_objects.prompt import Prompt
@@ -165,8 +165,10 @@ class ChapterReviewService:
         if not cast:
             return issues
 
-        # 提取章节中出现的人物
-        characters_in_chapter = self._extract_characters_from_content(chapter.content)
+        # 提取章节中出现的人物（基于 Bible/Cast 角色词典匹配）
+        characters_in_chapter = self._extract_characters_from_content(
+            chapter.content, [c.name for c in cast.characters]
+        )
 
         # 使用 LLM 检查人物一致性
         for char_name in characters_in_chapter:
@@ -468,11 +470,13 @@ class ChapterReviewService:
 
         return max(0.0, base_score)
 
-    def _extract_characters_from_content(self, content: str) -> List[str]:
-        """从内容中提取人物名称（简化实现）"""
-        # TODO: 使用 NER 或 LLM 提取人物名称
-        # 这里先返回空列表，实际应该使用场记分析服务
-        return []
+    def _extract_characters_from_content(self, content: str, character_names: List[str]) -> List[str]:
+        """从内容中提取人物名称（基于 Bible/Cast 角色词典匹配）"""
+        found = []
+        for name in character_names:
+            if name and name in content:
+                found.append(name)
+        return found
 
     def _build_character_consistency_prompt(
         self,

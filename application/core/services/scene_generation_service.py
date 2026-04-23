@@ -44,7 +44,8 @@ class SceneGenerationService:
         scene: Scene,
         chapter_number: int,
         previous_scenes: List[str],
-        bible_context: Optional[Dict] = None
+        bible_context: Optional[Dict] = None,
+        novel_id: Optional[str] = None,
     ) -> str:
         """生成单个场景的正文
 
@@ -70,7 +71,8 @@ class SceneGenerationService:
         # 2. 向量检索过滤上下文（POV 防火墙）
         relevant_context = await self._retrieve_relevant_context(
             scene=scene,
-            scene_analysis=scene_analysis
+            scene_analysis=scene_analysis,
+            novel_id=novel_id,
         )
 
         # 3. 构建提示词
@@ -100,21 +102,65 @@ class SceneGenerationService:
     async def _retrieve_relevant_context(
         self,
         scene: Scene,
-        scene_analysis
+        scene_analysis,
+        novel_id: Optional[str] = None,
     ) -> Dict:
         """向量检索：获取与场景相关的上下文
 
-        Phase 2.1 简化版：暂时返回空上下文
+        使用 embedding_service + vector_store 从 Bible/章节摘要中检索
+        与场景目标相关的上下文片段。
         """
-        # TODO: 实现向量检索
-        # - 检索相关人物信息（POV 防火墙）
-        # - 检索相关地点信息
-        # - 检索相关伏笔
-        return {
-            "characters": [],
-            "locations": [],
-            "foreshadowings": []
-        }
+        if not novel_id or not self.vector_store or not self.embedding_service:
+            return {
+                "characters": [],
+                "locations": [],
+                "foreshadowings": []
+            }
+
+        try:
+            query_text = f"{scene.title} {scene.goal}"
+            query_vector = await self.embedding_service.embed(query_text)
+
+            collection = f"novel_{novel_id}_chunks"
+            results = await self.vector_store.search(
+                collection=collection,
+                query_vector=query_vector,
+                limit=5,
+            )
+
+            foreshadowings = []
+            characters = set()
+            locations = set()
+
+            for r in results:
+                payload = r.get("payload", {})
+                kind = payload.get("kind")
+                if kind == "character":
+                    characters.add(payload.get("name", ""))
+                elif kind == "location":
+                    locations.add(payload.get("name", ""))
+                elif kind == "foreshadowing" or payload.get("text"):
+                    foreshadowings.append({
+                        "description": payload.get("text", ""),
+                        "score": r.get("score", 0),
+                    })
+
+            # POV 防火墙：过滤掉与当前场景无关的角色
+            if scene_analysis.characters:
+                characters = characters & set(scene_analysis.characters)
+
+            return {
+                "characters": sorted(characters)[:5],
+                "locations": sorted(locations)[:5],
+                "foreshadowings": sorted(foreshadowings, key=lambda x: x.get("score", 0), reverse=True)[:3],
+            }
+        except Exception as e:
+            logger.warning(f"Scene vector retrieval failed: {e}")
+            return {
+                "characters": [],
+                "locations": [],
+                "foreshadowings": []
+            }
 
     def _build_scene_prompt(
         self,

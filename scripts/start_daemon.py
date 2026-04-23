@@ -7,6 +7,12 @@ import os
 os.environ['HF_HUB_OFFLINE'] = '1'
 os.environ['TRANSFORMERS_OFFLINE'] = '1'
 os.environ['HF_DATASETS_OFFLINE'] = '1'
+# httpx 会自动读取 Windows 系统代理，导致 localhost 请求被代理拦截返回 502。
+_no_proxy = os.environ.get("NO_PROXY", os.environ.get("no_proxy", ""))
+if "localhost" not in _no_proxy:
+    _no_proxy = (_no_proxy + ",localhost,127.0.0.1").lstrip(",")
+    os.environ["NO_PROXY"] = _no_proxy
+    os.environ["no_proxy"] = _no_proxy
 if os.getenv('DISABLE_SSL_VERIFY', 'false').lower() == 'true':
     os.environ['CURL_CA_BUNDLE'] = ''
     os.environ['REQUESTS_CA_BUNDLE'] = ''
@@ -30,9 +36,11 @@ from infrastructure.persistence.database.sqlite_foreshadowing_repository import 
 from infrastructure.persistence.database.sqlite_storyline_repository import SqliteStorylineRepository
 from infrastructure.persistence.database.sqlite_plot_arc_repository import SqlitePlotArcRepository
 from infrastructure.persistence.database.sqlite_narrative_event_repository import SqliteNarrativeEventRepository
-from infrastructure.persistence.database.sqlite_chapter_review_repository import SqliteChapterReviewRepository
+from infrastructure.persistence.database.sqlite_beat_sheet_repository import SqliteBeatSheetRepository
 
 from application.engine.services.autopilot_daemon import AutopilotDaemon
+from application.blueprint.services.beat_sheet_service import BeatSheetService
+from application.engine.services.scene_director_service import SceneDirectorService
 from application.engine.services.background_task_service import BackgroundTaskService
 from application.engine.services.chapter_aftermath_pipeline import ChapterAftermathPipeline
 from application.engine.services.circuit_breaker import CircuitBreaker
@@ -50,6 +58,8 @@ from interfaces.api.dependencies import (
     get_voice_drift_service,
     get_knowledge_service,
     get_chapter_indexing_service,
+    get_vector_store,
+    get_embedding_service,
 )
 from interfaces.api.middleware.logging_config import setup_logging
 
@@ -75,6 +85,8 @@ def build_daemon() -> AutopilotDaemon:
     llm_service = get_llm_service()
     chapter_workflow = build_auto_workflow(llm_service)
     context_builder = get_context_builder()
+    vector_store = get_vector_store()
+    embedding_service = get_embedding_service()
 
     planning_service = ContinuousPlanningService(
         story_node_repo=story_node_repo,
@@ -114,7 +126,8 @@ def build_daemon() -> AutopilotDaemon:
         narrative_event_repository=SqliteNarrativeEventRepository(get_database()),
     )
 
-    chapter_review_repo = SqliteChapterReviewRepository(get_database())
+    beat_sheet_repo = SqliteBeatSheetRepository(db)
+    storyline_repo = SqliteStorylineRepository(get_database())
 
     aftermath_pipeline = None
     try:
@@ -129,9 +142,8 @@ def build_daemon() -> AutopilotDaemon:
             chapter_repository=get_chapter_repository(),
             plot_arc_repository=SqlitePlotArcRepository(get_database()),
             narrative_event_repository=SqliteNarrativeEventRepository(get_database()),
-            chapter_review_repository=chapter_review_repo,
         )
-        logger.info("ChapterAftermathPipeline 已注入（叙事/向量/文风/KG；三元组与伏笔、故事线、张力、对话、剧情点单次 LLM）")
+        logger.info("ChapterAftermathPipeline 已注入（叙事/向量/文风/KG；三元组与伏笔、故事线、剧情点单次 LLM）")
     except Exception as e:
         logger.warning("ChapterAftermathPipeline 初始化失败，审计将降级：%s", e)
 
@@ -142,6 +154,17 @@ def build_daemon() -> AutopilotDaemon:
         failure_threshold=10,  # 从 5 增加到 10，更宽容临时限流
         reset_timeout=180,     # 从 120 增加到 180 秒，给 API 更多恢复时间
     )
+
+    # ★ P0-2/P0-3: 注入 BeatSheetService + SceneDirectorService
+    beat_sheet_svc = BeatSheetService(
+        beat_sheet_repo=beat_sheet_repo,
+        chapter_repo=chapter_repo,
+        storyline_repo=storyline_repo,
+        llm_service=llm_service,
+        vector_store=vector_store,
+        bible_service=get_bible_service(),
+    )
+    scene_director_svc = SceneDirectorService(llm_service=llm_service)
 
     return AutopilotDaemon(
         novel_repository=novel_repo,
@@ -156,6 +179,8 @@ def build_daemon() -> AutopilotDaemon:
         circuit_breaker=circuit_breaker,
         chapter_workflow=chapter_workflow,
         aftermath_pipeline=aftermath_pipeline,
+        beat_sheet_service=beat_sheet_svc,
+        scene_director_service=scene_director_svc,
     )
 
 

@@ -10,9 +10,9 @@ from domain.bible.entities.style_note import StyleNote
 from domain.bible.value_objects.character_id import CharacterId
 from domain.novel.entities.novel import Novel, NovelStage
 from domain.novel.value_objects.novel_id import NovelId
-from domain.bible.repositories.bible_repository import BibleRepository
-from domain.novel.repositories.novel_repository import NovelRepository
-from domain.novel.repositories.chapter_repository import ChapterRepository
+from domain.world.repositories import BibleRepository
+from domain.novel.repositories import NovelRepository
+from domain.novel.repositories import ChapterRepository
 from domain.shared.exceptions import EntityNotFoundError
 from application.world.dtos.bible_dto import BibleDTO, CharacterDTO
 

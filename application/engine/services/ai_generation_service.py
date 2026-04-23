@@ -3,8 +3,8 @@ import logging
 from typing import Optional
 from domain.ai.services.llm_service import LLMService, GenerationConfig
 from domain.ai.value_objects.prompt import Prompt
-from domain.novel.repositories.novel_repository import NovelRepository
-from domain.bible.repositories.bible_repository import BibleRepository
+from domain.novel.repositories import NovelRepository
+from domain.world.repositories import BibleRepository
 from domain.novel.value_objects.novel_id import NovelId
 from domain.novel.entities.novel import Novel
 from domain.bible.entities.bible import Bible

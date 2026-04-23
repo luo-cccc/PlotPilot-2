@@ -1,8 +1,3 @@
-from enum import Enum
+from domain.novel.value_objects import StorylineStatus
 
-
-class StorylineStatus(Enum):
-    """故事线状态枚举"""
-    ACTIVE = "active"
-    COMPLETED = "completed"
-    ABANDONED = "abandoned"
+__all__ = ["StorylineStatus"]

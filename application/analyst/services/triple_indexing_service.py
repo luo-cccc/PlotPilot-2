@@ -18,6 +18,8 @@ Collection 命名约定：
 - 触发词召回的向量补充
 - 图谱子网的语义扩展
 """
+import asyncio
+import concurrent.futures
 import logging
 from typing import List, Optional, Dict, Any
 
@@ -47,6 +49,7 @@ class TripleIndexingService:
         self._vector_store = vector_store
         self._embedding_service = embedding_service
         self._embedding_dimension = embedding_service.get_dimension()
+        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 
     def _get_collection_name(self, novel_id: str) -> str:
         """获取 collection 名称
@@ -353,9 +356,6 @@ class TripleIndexingService:
         Returns:
             匹配的三元组列表
         """
-        import asyncio
-        import concurrent.futures
-
         async def _search():
             return await self.search_triples(novel_id, query, limit, min_score)
 
@@ -367,5 +367,4 @@ class TripleIndexingService:
         def _run_in_fresh_loop():
             return asyncio.run(_search())
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            return pool.submit(_run_in_fresh_loop).result()
+        return self._executor.submit(_run_in_fresh_loop).result()

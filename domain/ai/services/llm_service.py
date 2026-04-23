@@ -13,11 +13,13 @@ class GenerationConfig:
         max_tokens: int = 4096,
         temperature: float = 1.0,
         response_format: Optional[Dict] = None,
+        timeout_seconds: Optional[float] = None,
     ):
         self.model = model
         self.max_tokens = max_tokens
         self.temperature = temperature
         self.response_format = response_format
+        self.timeout_seconds = timeout_seconds
         self.__post_init__()
 
     def __post_init__(self):

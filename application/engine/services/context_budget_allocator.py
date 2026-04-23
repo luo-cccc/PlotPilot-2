@@ -21,9 +21,9 @@ from datetime import datetime
 
 from domain.novel.value_objects.novel_id import NovelId
 from domain.novel.value_objects.chapter_id import ChapterId
-from domain.novel.repositories.foreshadowing_repository import ForeshadowingRepository
-from domain.novel.repositories.chapter_repository import ChapterRepository
-from domain.bible.repositories.bible_repository import BibleRepository
+from domain.novel.repositories import ForeshadowingRepository
+from domain.novel.repositories import ChapterRepository
+from domain.world.repositories import BibleRepository
 from infrastructure.persistence.database.story_node_repository import StoryNodeRepository
 from domain.ai.services.vector_store import VectorStore
 from domain.ai.services.embedding_service import EmbeddingService
@@ -56,7 +56,7 @@ class ContextSlot:
     content: str = ""
     tokens: int = 0
     max_tokens: Optional[int] = None  # None 表示无上限
-    min_tokens: int = 0  # 最小保留量
+    min_tokens: int = 50  # 最小保留量（默认 50 tokens，防止被完全压缩为空）
     priority: int = 0  # 同层级内的优先级（越大越优先）
     
     @property
@@ -207,13 +207,10 @@ class ContextBudgetAllocator:
         if total_chars == 0:
             return 0
         
-        chinese_ratio = chinese_chars / total_chars
-        
-        # 加权估算
         zh_tokens = chinese_chars / self.CHARS_PER_TOKEN_ZH
         en_tokens = (total_chars - chinese_chars) / self.CHARS_PER_TOKEN_EN
-        
-        return int(zh_tokens * chinese_ratio + en_tokens * (1 - chinese_ratio) + 0.5)
+
+        return int(zh_tokens + en_tokens + 0.5)
     
     def allocate(
         self,
@@ -222,6 +219,7 @@ class ContextBudgetAllocator:
         outline: str,
         total_budget: int = 35000,
         scene_director: Optional[Dict[str, Any]] = None,
+        genre_preset: Optional[str] = None,
     ) -> BudgetAllocation:
         """执行预算分配
         
@@ -231,12 +229,18 @@ class ContextBudgetAllocator:
             outline: 章节大纲
             total_budget: 总 Token 预算
             scene_director: 场记分析结果（可选的角色/地点过滤）
+            genre_preset: 类型锚定文本（genre + world_preset），注入 T0
         
         Returns:
             BudgetAllocation: 分配结果
         """
+        # 类型校验：scene_director 必须是字典或 None
+        if scene_director is not None and not isinstance(scene_director, dict):
+            logger.warning(f"scene_director 类型错误: {type(scene_director).__name__}，已忽略")
+            scene_director = None
+
         allocation = BudgetAllocation(total_budget=total_budget)
-        
+
         # ========== V7 全局收敛沙漏：计算进度与阶段 ==========
         total_chapters = self._estimate_total_chapters(novel_id)
         progress = chapter_number / max(total_chapters, 1)
@@ -251,7 +255,7 @@ class ContextBudgetAllocator:
         )
         
         # ========== 第一步：收集所有内容 ==========
-        slots = self._collect_all_slots(novel_id, chapter_number, outline, scene_director)
+        slots = self._collect_all_slots(novel_id, chapter_number, outline, scene_director, genre_preset=genre_preset)
         
         # 提取过期伏笔用于终端强制约束
         pending_fs_slot = slots.get("pending_foreshadowings")
@@ -265,10 +269,17 @@ class ContextBudgetAllocator:
         t0_slots = {name: slot for name, slot in slots.items() if slot.tier == PriorityTier.T0_CRITICAL}
         t0_total = sum(slot.tokens for slot in t0_slots.values())
         
-        if t0_total > total_budget:
-            # 极端情况：T0 超出总预算，只能截断
+        # T0 溢出保护：确保 T1/T2 至少有 15% 总预算，避免 LLM 闭眼写作
+        T0_MAX_RATIO = 0.85  # T0 最多占 85%，留 15% 给 T1/T2
+        t0_budget_cap = int(total_budget * T0_MAX_RATIO)
+        if t0_total > t0_budget_cap:
+            logger.warning(f"T0 强制内容 {t0_total} tokens 超出 {T0_MAX_RATIO:.0%} 预算上限 {t0_budget_cap}，按优先级截断")
+            allocation.compression_log.append(f"⚠️ T0 超预算上限，按优先级截断至 {t0_budget_cap}")
+            t0_total = self._truncate_t0_slots(t0_slots, t0_budget_cap)
+        elif t0_total > total_budget:
+            # 极端情况：T0 超出总预算（连 85% 上限都兜不住）
             logger.warning(f"T0 强制内容 {t0_total} tokens 超出总预算 {total_budget}")
-            allocation.compression_log.append(f"⚠️ T0 超预算，强制截断")
+            allocation.compression_log.append(f"⚠️ T0 超总预算，强制截断")
             t0_total = self._truncate_t0_slots(t0_slots, total_budget)
         
         allocation.t0_reserved = t0_total
@@ -276,15 +287,23 @@ class ContextBudgetAllocator:
         # ========== 第三步：分配剩余预算给 T1/T2/T3 ==========
         remaining = total_budget - t0_total
         
-        # T1 配额
-        t1_budget = int(remaining * self.T1_BUDGET_RATIO / (self.T1_BUDGET_RATIO + self.T2_BUDGET_RATIO + self.T3_BUDGET_RATIO))
+        # T1 配额（保证最低预算：即使 remaining 很小，T1 至少分 5% 总预算）
+        T1_MIN_BUDGET = int(total_budget * 0.05)
+        t1_budget = max(
+            int(remaining * self.T1_BUDGET_RATIO / (self.T1_BUDGET_RATIO + self.T2_BUDGET_RATIO + self.T3_BUDGET_RATIO)),
+            T1_MIN_BUDGET
+        )
         t1_slots = {name: slot for name, slot in slots.items() if slot.tier == PriorityTier.T1_COMPRESSIBLE}
         t1_actual = self._allocate_tier(t1_slots, t1_budget, allocation.compression_log)
         allocation.t1_allocated = t1_actual
         
-        # T2 配额
+        # T2 配额（保证最低预算：即使 remaining_after_t1 很小，T2 至少分 3% 总预算）
+        T2_MIN_BUDGET = int(total_budget * 0.03)
         remaining_after_t1 = remaining - t1_actual
-        t2_budget = int(remaining_after_t1 * self.T2_BUDGET_RATIO / (self.T2_BUDGET_RATIO + self.T3_BUDGET_RATIO))
+        t2_budget = max(
+            int(remaining_after_t1 * self.T2_BUDGET_RATIO / (self.T2_BUDGET_RATIO + self.T3_BUDGET_RATIO)),
+            T2_MIN_BUDGET
+        )
         t2_slots = {name: slot for name, slot in slots.items() if slot.tier == PriorityTier.T2_DYNAMIC}
         t2_actual = self._allocate_tier(t2_slots, t2_budget, allocation.compression_log)
         allocation.t2_allocated = t2_actual
@@ -319,11 +338,23 @@ class ContextBudgetAllocator:
         chapter_number: int,
         outline: str,
         scene_director: Optional[Dict[str, Any]] = None,
+        genre_preset: Optional[str] = None,
     ) -> Dict[str, ContextSlot]:
         """收集所有上下文槽位"""
         slots = {}
         
         # ==================== T0: 强制内容 ====================
+        
+        # ★ T0-genre: 类型锚定（genre + world_preset）—— priority=125
+        if genre_preset:
+            slots["genre_anchor"] = ContextSlot(
+                name="🎯类型锚定(GENRE_ANCHOR)",
+                tier=PriorityTier.T0_CRITICAL,
+                content=genre_preset,
+                tokens=self.estimate_tokens(genre_preset),
+                max_tokens=400,
+                priority=125,
+            )
 
         # ★ V7 T0-Ω: 生命周期行为准则（全局收敛沙漏）—— 最高优先级 priority=130
         lifecycle_directive = self._build_lifecycle_directive(novel_id, chapter_number)
@@ -522,13 +553,16 @@ class ContextBudgetAllocator:
             elif slot.max_tokens and slot.max_tokens > 0:
                 # 可以部分保留
                 remaining = budget - total_used
-                if remaining > slot.min_tokens:
+                # 压缩上限不超过 slot.max_tokens
+                alloc = min(remaining, slot.max_tokens)
+                if alloc > slot.min_tokens:
                     # 压缩内容
-                    target_chars = int(remaining * self.CHARS_PER_TOKEN_ZH)
+                    original_tokens = slot.tokens
+                    target_chars = int(alloc * self.CHARS_PER_TOKEN_ZH)
                     slot.content = slot.content[:target_chars] + "..."
-                    slot.tokens = remaining
-                    total_used += remaining
-                    compression_log.append(f"压缩 {name}: {slot.tokens} → {remaining} tokens")
+                    slot.tokens = alloc
+                    total_used += alloc
+                    compression_log.append(f"压缩 {name}: {original_tokens} → {alloc} tokens")
                 else:
                     # 完全舍弃
                     slot.content = ""
@@ -927,7 +961,7 @@ class ContextBudgetAllocator:
         
         try:
             # ========== Step 1: 从大纲中提取实体名称 ==========
-            mentioned_entities = self._extract_entities_from_outline(outline)
+            mentioned_entities = self._extract_entities_from_outline(outline, novel_id)
             
             # ========== Step 2: 一度关系召回 ==========
             one_hop_triples = []
@@ -972,7 +1006,7 @@ class ContextBudgetAllocator:
             logger.warning(f"获取图谱子网失败: {e}")
             return ""
     
-    def _extract_entities_from_outline(self, outline: str) -> List[str]:
+    def _extract_entities_from_outline(self, outline: str, novel_id: str = "") -> List[str]:
         """从大纲中提取实体名称
         
         简单实现：提取书名号《》中的内容作为作品名，
@@ -999,7 +1033,7 @@ class ContextBudgetAllocator:
         if self.bible_repo:
             try:
                 from domain.novel.value_objects.novel_id import NovelId
-                bible = self.bible_repo.get_by_novel_id(NovelId(self._current_novel_id))
+                bible = self.bible_repo.get_by_novel_id(NovelId(novel_id)) if novel_id else None
                 if bible and hasattr(bible, 'characters'):
                     for char in bible.characters:
                         if char.name in outline:
@@ -1295,7 +1329,8 @@ class ContextBudgetAllocator:
         head = raw[:head_n]
         tail = raw[-tail_n:]
         return (
-            f"【章首略览】\n{head}……\n"
+            f"【章首略览】\n{head}\n"
+            f"【前文中间部分已省略】\n"
             f"【章末节选，供本章开头承接】\n{tail}"
         )
 
@@ -1440,11 +1475,23 @@ class ContextBudgetAllocator:
         """估算目标总章节数
         
         优先级：
+        0. novel.target_chapters（用户明确设定的目标）
         1. 结构树根节点（part）的 chapter_end 字段
         2. 各 part 节点 suggested_chapter_count 之和
         3. 已有最大章节号 × 1.2（保守估算，假设已完成 80%+）
         4. 兜底返回 100
         """
+        # 策略 0：用户明确设定的目标章节数（最可靠）
+        if self.novel_repo:
+            try:
+                novel = self.novel_repo.get(novel_id)
+                if novel and getattr(novel, 'target_chapters', None):
+                    tc = novel.target_chapters
+                    if tc and tc > 0:
+                        return tc
+            except Exception:
+                pass
+
         if not self.story_node_repo:
             return 100
         
@@ -1494,10 +1541,10 @@ class ContextBudgetAllocator:
     _LIFECYCLE_PROMPT_ID = "lifecycle-phase-directives"
 
     def _get_phase_directives(self) -> Dict[StoryPhase, str]:
-        """从 PromptLoader 获取阶段指令字典（集中管理）。"""
-        from infrastructure.ai.prompt_loader import get_prompt_loader
+        """从 PromptManager 获取阶段指令字典（集中管理，DB/JSON 双轨）。"""
+        from infrastructure.ai.prompt_manager import get_prompt_manager
 
-        raw = get_prompt_loader().get_directives_dict(
+        raw = get_prompt_manager().get_directives_dict(
             self._LIFECYCLE_PROMPT_ID, directives_key="_directives"
         )
         if not raw:
@@ -1527,16 +1574,16 @@ class ContextBudgetAllocator:
         directive += f"📊 全局进度：第 {chapter_number} 章 / 约 {total} 章 ({progress:.0%})\n"
         directive += f"🎯 当前阶段：{phase.value}\n"
 
-        from infrastructure.ai.prompt_loader import get_prompt_loader
-        loader = get_prompt_loader()
+        from infrastructure.ai.prompt_manager import get_prompt_manager
+        mgr = get_prompt_manager()
 
         if phase == StoryPhase.CONVERGENCE:
             remaining = total - chapter_number
-            extra_tpl = loader.get_field(self._LIFECYCLE_PROMPT_ID, "_convergence_extra", "")
+            extra_tpl = mgr.get_field(self._LIFECYCLE_PROMPT_ID, "_convergence_extra", "")
             directive += (extra_tpl.format(remaining=remaining) if extra_tpl else f"⚠️ 剩余约 {remaining} 章完成收束，时间紧迫。\n")
         elif phase == StoryPhase.FINALE:
             remaining = total - chapter_number
-            extra_tpl = loader.get_field(self._LIFECYCLE_PROMPT_ID, "_finale_extra", "")
+            extra_tpl = mgr.get_field(self._LIFECYCLE_PROMPT_ID, "_finale_extra", "")
             directive += (extra_tpl.format(remaining=remaining) if extra_tpl else f"🔥 剩余约 {remaining} 章，这是最后的冲刺。\n")
 
         return directive

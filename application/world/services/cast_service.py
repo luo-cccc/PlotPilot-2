@@ -6,7 +6,7 @@ from typing import Optional, List, Dict, Set, Any, TYPE_CHECKING
 from pathlib import Path
 
 if TYPE_CHECKING:
-    from domain.knowledge.repositories.knowledge_repository import KnowledgeRepository
+    from domain.world.repositories import KnowledgeRepository
 from domain.cast.aggregates.cast_graph import CastGraph
 from domain.cast.entities.character import Character
 from domain.cast.entities.relationship import Relationship

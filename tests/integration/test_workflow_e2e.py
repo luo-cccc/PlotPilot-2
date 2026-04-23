@@ -6,7 +6,7 @@ from application.services.context_builder import ContextBuilder
 from application.dtos.generation_result import GenerationResult
 from domain.novel.services.consistency_checker import ConsistencyChecker
 from domain.novel.services.storyline_manager import StorylineManager
-from domain.novel.repositories.plot_arc_repository import PlotArcRepository
+from domain.novel.repositories import PlotArcRepository
 from domain.novel.value_objects.consistency_report import ConsistencyReport
 from domain.ai.services.llm_service import LLMService, GenerationConfig, GenerationResult as LLMResult
 from domain.ai.value_objects.token_usage import TokenUsage

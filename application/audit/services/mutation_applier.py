@@ -1,10 +1,10 @@
 """Mutation Applier Service - 应用 mutations 到事件"""
 import logging
 from typing import List, Dict, Any, Optional
-from domain.novel.repositories.narrative_event_repository import NarrativeEventRepository
+from domain.novel.repositories import NarrativeEventRepository
 
 
-logger = logging.getLogger(__name__)
+logger= logging.getLogger(__name__)
 
 
 class MutationApplier:

@@ -5,7 +5,7 @@ import uuid
 from typing import Optional
 from domain.novel.entities.beat_sheet import BeatSheet
 from domain.novel.value_objects.scene import Scene
-from domain.novel.repositories.beat_sheet_repository import BeatSheetRepository
+from domain.novel.repositories import BeatSheetRepository
 
 
 class SqliteBeatSheetRepository(BeatSheetRepository):

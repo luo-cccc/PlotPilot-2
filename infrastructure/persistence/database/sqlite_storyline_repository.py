@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import List, Optional
 
 from domain.novel.entities.storyline import Storyline
-from domain.novel.repositories.storyline_repository import StorylineRepository
+from domain.novel.repositories import StorylineRepository
 from domain.novel.value_objects.novel_id import NovelId
 from domain.novel.value_objects.storyline_milestone import StorylineMilestone
 from domain.novel.value_objects.storyline_status import StorylineStatus

@@ -37,7 +37,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from domain.ai.services.llm_service import LLMService, GenerationConfig
 from domain.ai.value_objects.prompt import Prompt
-from domain.bible.repositories.bible_repository import BibleRepository
+from domain.world.repositories import BibleRepository
 from domain.novel.value_objects.novel_id import NovelId
 
 from application.ai.llm_json_extract import parse_llm_json_to_dict

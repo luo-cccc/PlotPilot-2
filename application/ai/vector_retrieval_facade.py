@@ -20,6 +20,7 @@ class VectorRetrievalFacade:
     ):
         self.vector_store = vector_store
         self.embedding_service = embedding_service
+        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 
     def sync_search(
         self,
@@ -47,8 +48,7 @@ class VectorRetrievalFacade:
         def _run_in_fresh_loop() -> List[dict]:
             return asyncio.run(self._async_search(collection, query_text, limit))
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            return pool.submit(_run_in_fresh_loop).result()
+        return self._executor.submit(_run_in_fresh_loop).result()
 
     async def _async_search(
         self,

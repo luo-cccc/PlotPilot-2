@@ -14,8 +14,8 @@ from domain.novel.value_objects.foreshadowing import (
     ForeshadowingStatus,
     ImportanceLevel
 )
-from domain.novel.repositories.foreshadowing_repository import ForeshadowingRepository
-from domain.bible.repositories.bible_repository import BibleRepository
+from domain.novel.repositories import ForeshadowingRepository
+from domain.world.repositories import BibleRepository
 
 
 class TestStateUpdater:

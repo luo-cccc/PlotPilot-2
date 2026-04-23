@@ -22,8 +22,8 @@ from datetime import datetime
 from domain.ai.services.llm_service import LLMService, GenerationConfig
 from domain.ai.value_objects.prompt import Prompt
 from domain.novel.value_objects.novel_id import NovelId
-from domain.novel.repositories.chapter_repository import ChapterRepository
-from domain.novel.repositories.foreshadowing_repository import ForeshadowingRepository
+from domain.novel.repositories import ChapterRepository
+from domain.novel.repositories import ForeshadowingRepository
 from infrastructure.persistence.database.story_node_repository import StoryNodeRepository
 from domain.structure.story_node import NodeType
 

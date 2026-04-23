@@ -19,7 +19,7 @@ load_dotenv()
 # 添加项目根目录到路径
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from infrastructure.ai.llm_client import LLMClient
+from infrastructure.ai.provider_factory import DynamicLLMService
 from application.engine.services.autopilot_daemon import AutopilotDaemon
 from application.engine.services.context_builder import ContextBuilder
 from application.engine.services.background_task_service import BackgroundTaskService
@@ -53,7 +53,7 @@ def main():
     chapter_repository = SqliteChapterRepository(db)
 
     # 初始化 LLM 客户端
-    llm_client = LLMClient()
+    llm_service = DynamicLLMService()
 
     # 初始化上下文构建器（简化版，后续接入完整依赖）
     context_builder = ContextBuilder(
@@ -71,7 +71,7 @@ def main():
     # 初始化守护进程
     daemon = AutopilotDaemon(
         novel_repository=novel_repository,
-        llm_service=llm_client,
+        llm_service=llm_service,
         context_builder=context_builder,
         background_task_service=background_task_service,
         poll_interval=5,  # 5 秒轮询一次

@@ -3,7 +3,7 @@ import logging
 from typing import List, Optional
 from uuid import uuid4
 from datetime import datetime
-from domain.novel.repositories.voice_vault_repository import VoiceVaultRepository
+from domain.novel.repositories import VoiceVaultRepository
 from infrastructure.persistence.database.connection import DatabaseConnection
 
 logger = logging.getLogger(__name__)

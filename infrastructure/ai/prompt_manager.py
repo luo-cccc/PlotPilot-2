@@ -287,15 +287,17 @@ class PromptManager:
     5. 变量渲染：{variable} 占位符替换
     """
 
-    def __init__(self, db_connection=None):
+    def __init__(self, db_connection=None, fallback_loader=None):
         """
         Args:
             db_connection: DatabaseConnection 实例（延迟注入，避免循环导入）。
                            为 None 时使用全局 get_database()（与 FastAPI / paths.DATA_DIR 一致）。
+            fallback_loader: PromptLoader 实例，当 DB 中找不到节点时回退到 JSON。
         """
         self._db = db_connection
         self._seeded = False
         self._stats_cache: Optional[Dict[str, Any]] = None
+        self._fallback_loader = fallback_loader
 
     def _get_db(self):
         """与主应用共用同一 SQLite（含桌面版 AITEXT_PROD_DATA_DIR）。"""
@@ -801,6 +803,71 @@ class PromptManager:
             return template
 
     # ------------------------------------------------------------------
+    # JSON 降级读取（兼容原先 PromptLoader 接口）
+    # ------------------------------------------------------------------
+
+    def get_field(self, node_key: str, field: str, default: Any = None) -> Any:
+        """获取指定字段值，DB 优先，找不到时回退到 JSON。"""
+        node = self.get_node(node_key, by_key=True)
+        if node and node._active_version:
+            if field in node.metadata:
+                return node.metadata[field]
+            if field == "system_prompt":
+                return node._active_version.system_prompt
+            if field == "user_template":
+                return node._active_version.user_template
+        if self._fallback_loader is not None:
+            return self._fallback_loader.get_field(node_key, field, default)
+        return default
+
+    def get_list_field(self, node_key: str, field: str) -> List[str]:
+        """获取列表字段，DB 优先，找不到时回退到 JSON。"""
+        node = self.get_node(node_key, by_key=True)
+        if node and field in node.metadata:
+            raw = node.metadata[field]
+            if isinstance(raw, list):
+                return [str(x) for x in raw]
+        if self._fallback_loader is not None:
+            return self._fallback_loader.get_list_field(node_key, field)
+        return []
+
+    def get_directives_dict(
+        self, node_key: str, directives_key: str = "_directives"
+    ) -> Dict[str, str]:
+        """获取指令字典，DB 优先，找不到时回退到 JSON。"""
+        node = self.get_node(node_key, by_key=True)
+        if node and directives_key in node.metadata:
+            raw = node.metadata[directives_key]
+            if isinstance(raw, dict):
+                return {k: str(v) for k, v in raw.items()}
+        if self._fallback_loader is not None:
+            return self._fallback_loader.get_directives_dict(node_key, directives_key)
+        return {}
+
+    def render_field(
+        self,
+        node_key: str,
+        template_field: str = "user_template",
+        variables: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """渲染指定字段的模板，DB 优先，找不到时回退到 JSON。"""
+        node = self.get_node(node_key, by_key=True)
+        if node and node._active_version:
+            raw = ""
+            if template_field == "system_prompt":
+                raw = node._active_version.system_prompt
+            elif template_field == "user_template":
+                raw = node._active_version.user_template
+            elif template_field in node.metadata:
+                raw = node.metadata.get(template_field, "")
+            if raw and variables:
+                return self._render_template(raw, variables)
+            return raw
+        if self._fallback_loader is not None:
+            return self._fallback_loader.render(node_key, template_field, variables) or ""
+        return ""
+
+    # ------------------------------------------------------------------
     # 统计 & 分组
     # ------------------------------------------------------------------
 
@@ -895,8 +962,9 @@ _manager_instance: Optional[PromptManager] = None
 
 
 def get_prompt_manager() -> PromptManager:
-    """获取全局 PromptManager 单例。"""
+    """获取全局 PromptManager 单例（自动注入 PromptLoader 降级策略）。"""
     global _manager_instance
     if _manager_instance is None:
-        _manager_instance = PromptManager()
+        from infrastructure.ai.prompt_loader import PromptLoader
+        _manager_instance = PromptManager(fallback_loader=PromptLoader())
     return _manager_instance

@@ -6,14 +6,15 @@
 import uuid
 import json
 import logging
+import asyncio
 from typing import Dict, List, Optional, TYPE_CHECKING
 from datetime import datetime
 
 from domain.novel.entities.beat_sheet import BeatSheet
 from domain.novel.value_objects.scene import Scene
-from domain.novel.repositories.beat_sheet_repository import BeatSheetRepository
-from domain.novel.repositories.chapter_repository import ChapterRepository
-from domain.novel.repositories.storyline_repository import StorylineRepository
+from domain.novel.repositories import BeatSheetRepository
+from domain.novel.repositories import ChapterRepository
+from domain.novel.repositories import StorylineRepository
 from domain.ai.services.llm_service import LLMService, GenerationConfig
 from domain.ai.value_objects.prompt import Prompt
 
@@ -63,31 +64,39 @@ class BeatSheetService:
         """
         logger.info(f"Generating beat sheet for chapter {chapter_id}")
 
+        # 幂等检查：已存在则直接返回
+        existing = await self.beat_sheet_repo.get_by_chapter_id(chapter_id)
+        if existing:
+            logger.info(f"Beat sheet for chapter {chapter_id} already exists, skipping generation")
+            return existing
+
         # 1. 混合检索：获取相关上下文
         context = await self._retrieve_relevant_context(chapter_id, outline)
 
         # 2. 构建提示词
         prompt = self._build_beat_sheet_prompt(outline, context)
 
-        # 3. 调用 LLM 生成节拍表
-        config = GenerationConfig(max_tokens=2048, temperature=0.7)
-        try:
-            response = await self.llm_service.generate(prompt, config)
-            scenes = self._parse_llm_response(response)
-        except Exception as e:
-            logger.warning(f"Beat sheet LLM 生成失败，使用默认节拍表: {e}")
-            scenes = [
-                Scene(
-                    title=f"场景 {i+1}",
-                    goal="（LLM 生成失败，使用默认节拍）",
-                    pov_character="主角",
-                    location=None,
-                    tone=None,
-                    estimated_words=800,
-                    order_index=i,
-                )
-                for i in range(3)
-            ]
+        # 3. 调用 LLM 生成节拍表（带重试）
+        scenes = []
+        last_error = None
+        for attempt in range(3):
+            config = GenerationConfig(max_tokens=2048, temperature=0.7 + attempt * 0.1)
+            try:
+                response = await self.llm_service.generate(prompt, config)
+                scenes = self._parse_llm_response(response)
+                if scenes:
+                    break
+                logger.warning(f"Beat sheet attempt {attempt + 1} returned empty scenes, retrying...")
+            except Exception as e:
+                last_error = e
+                logger.warning(f"Beat sheet LLM attempt {attempt + 1} failed: {e}")
+                if attempt < 2:
+                    await asyncio.sleep(0.5 * (attempt + 1))
+
+        # 4. Fallback：全部重试失败时使用基于大纲的默认节拍
+        if not scenes:
+            logger.warning(f"Beat sheet LLM 全部重试失败，使用基于大纲的默认节拍表: {last_error}")
+            scenes = self._build_fallback_beats(outline)
 
         beat_sheet = BeatSheet(
             id=str(uuid.uuid4()),
@@ -472,6 +481,46 @@ class BeatSheetService:
             logger.error(f"Failed to parse LLM response: {e}")
             logger.error(f"Response: {response_text if 'response_text' in locals() else response}")
             raise ValueError(f"Failed to parse beat sheet response: {e}")
+
+    def _build_fallback_beats(self, outline: str) -> List[Scene]:
+        """基于大纲构建默认节拍表（LLM 全部失败时使用）"""
+        # 从大纲中提取关键词作为场景目标
+        outline_words = outline.strip().split()
+        outline_keyword = outline_words[0] if outline_words else "本章"
+
+        # 根据大纲长度估算场景数和字数
+        outline_len = len(outline)
+        if outline_len < 50:
+            num_scenes = 2
+            words_per_scene = 1200
+        elif outline_len < 150:
+            num_scenes = 3
+            words_per_scene = 1000
+        else:
+            num_scenes = 4
+            words_per_scene = 800
+
+        scenes = []
+        for i in range(num_scenes):
+            # 为每个场景生成基于大纲的 goal
+            if i == 0:
+                goal = f"展开{outline_keyword}的初始情境，建立本章基调"
+            elif i == num_scenes - 1:
+                goal = f"将{outline_keyword}推向高潮或转折点，为后续埋下伏笔"
+            else:
+                goal = f"推进{outline_keyword}的情节发展，加深冲突或揭示信息"
+
+            scenes.append(Scene(
+                title=f"场景 {i + 1}",
+                goal=goal,
+                pov_character="主角",
+                location=None,
+                tone="紧张" if i == num_scenes - 1 else "平稳",
+                estimated_words=words_per_scene,
+                order_index=i,
+            ))
+
+        return scenes
 
     async def get_beat_sheet(self, chapter_id: str) -> Optional[BeatSheet]:
         """获取章节的节拍表"""

@@ -7,7 +7,7 @@ from interfaces.api.v1.engine.generation import router
 from application.workflows.auto_novel_generation_workflow import AutoNovelGenerationWorkflow
 from application.engine.services.hosted_write_service import HostedWriteService
 from domain.novel.services.storyline_manager import StorylineManager
-from domain.novel.repositories.plot_arc_repository import PlotArcRepository
+from domain.novel.repositories import PlotArcRepository
 from domain.novel.entities.storyline import Storyline
 from domain.novel.value_objects.novel_id import NovelId
 from domain.novel.value_objects.storyline_type import StorylineType

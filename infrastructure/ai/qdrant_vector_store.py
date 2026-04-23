@@ -42,9 +42,9 @@ class QdrantVectorStore(VectorStore):
             url: 完整的 Qdrant URL（优先于 host/port）
         """
         if url:
-            self.client = QdrantClient(url=url, api_key=api_key)
+            self.client = QdrantClient(url=url, api_key=api_key, prefer_grpc=False, check_compatibility=False)
         else:
-            self.client = QdrantClient(host=host, port=port, api_key=api_key)
+            self.client = QdrantClient(host=host, port=port, api_key=api_key, prefer_grpc=False, check_compatibility=False)
 
     async def insert(
         self,

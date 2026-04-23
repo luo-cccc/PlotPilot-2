@@ -1,8 +1,8 @@
 """Narrative Entity State Service - combines base + events + replay."""
 
 from typing import Optional
-from domain.novel.repositories.entity_base_repository import EntityBaseRepository
-from domain.novel.repositories.narrative_event_repository import NarrativeEventRepository
+from domain.novel.repositories import EntityBaseRepository
+from domain.novel.repositories import NarrativeEventRepository
 from domain.novel.services.narrative_state_replay import replay_entity_state
 
 

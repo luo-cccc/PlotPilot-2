@@ -1,6 +1,7 @@
 """SceneDirectorService - 场景导演服务，基于 LLM 的大纲分析"""
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from typing import Optional
@@ -43,17 +44,27 @@ class SceneDirectorService:
         """
         user = f"章节号: {chapter_number}\n大纲:\n{outline.strip()}"
         prompt = Prompt(system=SCENE_DIRECTOR_SYSTEM, user=user)
-        config = GenerationConfig(
-            model=self._model,
-            max_tokens=self._DEFAULT_MAX_TOKENS,
-            temperature=self._DEFAULT_TEMPERATURE,
-        )
-        raw = await self._llm.generate(prompt, config)
-        data, errs = parse_llm_json_to_dict(raw.content)
-        if not data:
-            logger.warning("scene director JSON parse failed: %s", errs)
-            return SceneDirectorAnalysis()
-        return self._coerce(data)
+        last_err = None
+        for attempt in range(3):
+            config = GenerationConfig(
+                model=self._model,
+                max_tokens=self._DEFAULT_MAX_TOKENS,
+                temperature=self._DEFAULT_TEMPERATURE + attempt * 0.05,
+            )
+            try:
+                raw = await self._llm.generate(prompt, config)
+                data, errs = parse_llm_json_to_dict(raw.content)
+                if data:
+                    return self._coerce(data)
+                last_err = errs
+                logger.warning("scene director attempt %d parse failed: %s", attempt + 1, errs)
+            except Exception as e:
+                last_err = e
+                logger.warning("scene director attempt %d LLM failed: %s", attempt + 1, e)
+            if attempt < 2:
+                await asyncio.sleep(0.5 * (attempt + 1))
+        logger.warning("scene director all attempts failed, returning empty: %s", last_err)
+        return SceneDirectorAnalysis()
 
     def _coerce(self, data: dict) -> SceneDirectorAnalysis:
         """将 LLM 返回的字典强制转换为 SceneDirectorAnalysis
@@ -100,9 +111,15 @@ class SceneDirectorService:
                 return [str(x) for x in v if x is not None]
             return [str(v)]
 
+        characters = as_str_list("characters")
+
         pov = data.get("pov")
         if pov is not None:
             pov = str(pov).strip() or None
+            # POV 一致性校验：必须在 characters 列表中
+            if pov and pov not in characters:
+                logger.warning("SceneDirector POV '%s' 不在角色列表 %s 中，降级为 None", pov, characters)
+                pov = None
 
         emotional_state = data.get("emotional_state")
         if emotional_state is None:

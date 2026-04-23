@@ -10,9 +10,11 @@ from application.ai.structured_json_pipeline import (
 )
 from application.analyst.tension.schema import TensionDiagnosisLlmPayload
 from application.workbench.dtos.writer_block_dto import TensionDiagnosis, TensionSlingshotRequest
-from domain.novel.repositories.chapter_repository import ChapterRepository
-from domain.novel.repositories.narrative_event_repository import NarrativeEventRepository
-from domain.novel.repositories.plot_arc_repository import PlotArcRepository
+from domain.ai.services.llm_service import LLMService, GenerationConfig
+from domain.ai.value_objects.prompt import Prompt
+from domain.novel.repositories import ChapterRepository
+from domain.novel.repositories import NarrativeEventRepository
+from domain.novel.repositories import PlotArcRepository
 from domain.novel.value_objects.novel_id import NovelId
 
 _CHAPTER_EXCERPT_MAX_CHARS = 3500
@@ -33,12 +35,12 @@ class TensionAnalyzer:
     def __init__(
         self,
         event_repository: NarrativeEventRepository,
-        llm_client,
+        llm_service: LLMService,
         chapter_repository: Optional[ChapterRepository] = None,
         plot_arc_repository: Optional[PlotArcRepository] = None,
     ) -> None:
         self._event_repository = event_repository
-        self._llm_client = llm_client
+        self._llm_service = llm_service
         self._chapter_repository = chapter_repository
         self._plot_arc_repository = plot_arc_repository
 
@@ -49,9 +51,14 @@ class TensionAnalyzer:
         )
         stats = self._analyze_statistics(events, request.chapter_number)
         extra_context = self._build_repository_context(request)
-        prompt = self._build_prompt(events, stats, request, extra_context)
-        response = await self._llm_client.generate(prompt)
-        return self._parse_response(response)
+        prompt_text = self._build_prompt(events, stats, request, extra_context)
+        prompt = Prompt(
+            system="你是小说创作顾问，专门帮助作者突破卡文。",
+            user=prompt_text,
+        )
+        config = GenerationConfig(max_tokens=2048, temperature=0.7)
+        response = await self._llm_service.generate(prompt, config)
+        return self._parse_response(response.content)
 
     def _build_repository_context(self, request: TensionSlingshotRequest) -> str:
         """从章节正文与剧情弧补充可核验的上下文（仓储缺失时自动跳过）。"""

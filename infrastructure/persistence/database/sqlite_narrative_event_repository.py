@@ -3,7 +3,7 @@ import json
 import logging
 from typing import Optional
 from uuid import uuid4
-from domain.novel.repositories.narrative_event_repository import NarrativeEventRepository
+from domain.novel.repositories import NarrativeEventRepository
 from infrastructure.persistence.database.connection import DatabaseConnection
 
 logger = logging.getLogger(__name__)

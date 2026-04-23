@@ -6,7 +6,7 @@ from domain.novel.value_objects.novel_id import NovelId
 from domain.novel.value_objects.storyline_type import StorylineType
 from domain.novel.value_objects.storyline_status import StorylineStatus
 from domain.novel.value_objects.storyline_milestone import StorylineMilestone
-from domain.novel.repositories.storyline_repository import StorylineRepository
+from domain.novel.repositories import StorylineRepository
 
 
 class TestStorylineManager:

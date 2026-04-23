@@ -6,7 +6,7 @@ from datetime import datetime
 from domain.novel.entities.chapter import Chapter
 from domain.novel.value_objects.chapter_id import ChapterId
 from domain.novel.value_objects.novel_id import NovelId
-from domain.novel.repositories.chapter_repository import ChapterRepository
+from domain.novel.repositories import ChapterRepository
 from infrastructure.persistence.database.connection import DatabaseConnection
 
 logger = logging.getLogger(__name__)
@@ -80,6 +80,15 @@ class SqliteChapterRepository(ChapterRepository):
             return None
 
         return self._row_to_chapter(row)
+
+    def get_by_novel_and_numbers(self, novel_id: NovelId, numbers: List[int]) -> List[Chapter]:
+        """根据小说 ID 和章节号列表批量获取章节"""
+        if not numbers:
+            return []
+        placeholders = ",".join("?" for _ in numbers)
+        sql = f"SELECT * FROM chapters WHERE novel_id = ? AND number IN ({placeholders})"
+        rows = self.db.fetch_all(sql, (novel_id.value, *numbers))
+        return [self._row_to_chapter(row) for row in rows]
 
     def list_by_novel(self, novel_id: NovelId) -> List[Chapter]:
         """列出小说的所有章节"""

@@ -3,9 +3,9 @@ import json
 import logging
 from typing import Optional
 from difflib import SequenceMatcher
-from domain.novel.repositories.voice_vault_repository import VoiceVaultRepository
+from domain.novel.repositories import VoiceVaultRepository
 
-logger = logging.getLogger(__name__)
+logger= logging.getLogger(__name__)
 
 
 class VoiceSampleService:

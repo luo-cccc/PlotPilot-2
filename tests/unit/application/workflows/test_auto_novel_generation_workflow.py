@@ -12,7 +12,7 @@ from application.engine.dtos.scene_director_dto import SceneDirectorAnalysis
 from application.engine.services.context_builder import ContextBuilder
 from domain.novel.services.consistency_checker import ConsistencyChecker
 from domain.novel.services.storyline_manager import StorylineManager
-from domain.novel.repositories.plot_arc_repository import PlotArcRepository
+from domain.novel.repositories import PlotArcRepository
 from domain.novel.value_objects.consistency_report import ConsistencyReport, Issue, IssueType, Severity
 from domain.novel.value_objects.chapter_state import ChapterState
 from domain.ai.services.llm_service import LLMService, GenerationResult as LLMResult
@@ -305,7 +305,7 @@ class TestConflictDetectionIntegration:
         """测试生成章节时包含幽灵批注"""
         from application.services.conflict_detection_service import ConflictDetectionService
         from application.dtos.ghost_annotation import GhostAnnotation
-        from domain.bible.repositories.bible_repository import BibleRepository
+        from domain.world.repositories import BibleRepository
         from domain.bible.entities.bible import Bible
         from domain.bible.entities.character import Character
         from domain.novel.value_objects.novel_id import NovelId
@@ -536,9 +536,7 @@ class TestStyleIntegration:
     ):
         """测试生成章节时注入风格指纹摘要"""
         from application.services.voice_fingerprint_service import VoiceFingerprintService
-        from domain.novel.repositories.voice_fingerprint_repository import VoiceFingerprintRepository
-
-        # Mock VoiceFingerprintService
+        from domain.novel.repositories import VoiceFingerprintRepository# Mock VoiceFingerprintService
         mock_fingerprint_repo = Mock(spec=VoiceFingerprintRepository)
         mock_fingerprint_repo.get_by_novel.return_value = {
             "metrics": {

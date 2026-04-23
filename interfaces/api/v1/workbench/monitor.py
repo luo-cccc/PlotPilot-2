@@ -8,7 +8,8 @@ from domain.novel.value_objects.novel_id import NovelId
 from interfaces.api.dependencies import (
     get_novel_repository,
     get_chapter_repository,
-    get_foreshadowing_repository
+    get_foreshadowing_repository,
+    get_voice_drift_service,
 )
 
 logger = logging.getLogger(__name__)
@@ -87,7 +88,8 @@ async def get_voice_drift(novel_id: str):
     """
     获取人声漂移检测数据
 
-    返回每个角色的语气漂移指数（0-1），超过 0.3 为异常
+    返回最近章节的文风漂移指数（0-1），超过 0.3 为异常。
+    当前按章节粒度返回（数据库模型暂不支持按角色细分）。
     """
     try:
         novel_repo = get_novel_repository()
@@ -96,33 +98,32 @@ async def get_voice_drift(novel_id: str):
         if not novel:
             raise HTTPException(status_code=404, detail="Novel not found")
 
-        # TODO: 实际实现需要从 voice analysis service 获取数据
-        # 这里先返回 mock 数据
+        voice_drift_service = get_voice_drift_service()
+        report = voice_drift_service.get_drift_report(novel_id)
+        scores = report.get("scores", [])
+
         results = []
-
-        # 从小说的角色列表中获取
-        characters = getattr(novel, 'characters', [])
-        for char in characters[:5]:  # 限制返回前5个角色
-            char_id = getattr(char, 'id', str(char))
-            char_name = getattr(char, 'name', char_id)
-
-            # Mock: 随机生成漂移分数
-            drift_score = 0.15  # 实际应该从分析结果中获取
-
+        # 取最近 10 个章节的评分
+        for score in scores[-10:]:
+            similarity = score.get("similarity_score", 1.0)
+            # drift = 1 - similarity（similarity 越低，drift 越高）
+            drift_score = max(0.0, min(1.0, 1.0 - similarity))
             status = "normal"
             if drift_score > 0.5:
                 status = "critical"
             elif drift_score > 0.3:
                 status = "warning"
 
+            chapter_num = score.get("chapter_number", 0)
             results.append(VoiceDriftResponse(
-                character_id=char_id,
-                character_name=char_name,
-                drift_score=drift_score,
+                character_id=f"chapter_{chapter_num}",
+                character_name=f"第{chapter_num}章",
+                drift_score=round(drift_score, 3),
                 status=status,
-                sample_count=10
+                sample_count=score.get("sentence_count", 0),
             ))
 
+        # 无数据时回退到空列表（前端可处理）
         return results
 
     except HTTPException:

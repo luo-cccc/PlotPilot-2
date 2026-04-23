@@ -13,7 +13,7 @@ from application.engine.dtos.scene_director_dto import SceneDirectorAnalysis
 from domain.novel.services.storyline_manager import StorylineManager
 
 logger = logging.getLogger(__name__)
-from domain.novel.repositories.plot_arc_repository import PlotArcRepository
+from domain.novel.repositories import PlotArcRepository
 from domain.novel.value_objects.novel_id import NovelId
 from domain.novel.value_objects.storyline_type import StorylineType
 from domain.novel.value_objects.tension_level import TensionLevel
@@ -30,6 +30,7 @@ from interfaces.api.dependencies import (
     get_auto_bible_generator,
     get_auto_knowledge_generator,
     get_setup_main_plot_suggestion_service,
+    get_chapter_review_service,
 )
 # from application.services.story_structure_ai_service import StoryStructureAIService  # 已废弃，使用 ContinuousPlanningService
 from application.blueprint.services.continuous_planning_service import ContinuousPlanningService
@@ -816,7 +817,8 @@ async def review_chapter(
     novel_id: str,
     chapter_number: int,
     workflow: AutoNovelGenerationWorkflow = Depends(get_auto_workflow),
-    chapter_service = Depends(get_chapter_service)
+    chapter_service = Depends(get_chapter_service),
+    review_service = Depends(get_chapter_review_service),
 ):
     """章节审稿：AI 审稿并返回修改建议"""
     try:
@@ -828,22 +830,21 @@ async def review_chapter(
                 detail=f"Chapter {chapter_number} not found"
             )
 
-        # 使用一致性检查作为审稿
-        # TODO: 这里可以调用专门的审稿 LLM prompt
-        suggestions = [
-            "建议检查人物一致性",
-            "建议优化对话节奏",
-            "建议增强场景描写"
-        ]
+        # 调用 ChapterReviewService 进行 AI 审阅
+        result = await review_service.review_chapter(novel_id, chapter_number)
 
-        # 简单评分逻辑（基于字数）
-        word_count = len(chapter.content)
-        score = min(100, max(60, word_count // 20))
+        # 将 ChapterReviewResult 映射为 ReviewResponse
+        suggestions = result.improvement_suggestions.copy()
+        for issue in result.issues:
+            msg = f"[{issue.severity}] {issue.issue_type}: {issue.description}"
+            if issue.suggestion:
+                msg += f"（建议：{issue.suggestion}）"
+            suggestions.append(msg)
 
         return ReviewResponse(
             chapter_number=chapter_number,
             suggestions=suggestions,
-            score=score
+            score=int(result.overall_score),
         )
 
     except HTTPException:

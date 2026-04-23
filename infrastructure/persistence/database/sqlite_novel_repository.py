@@ -5,7 +5,7 @@ from typing import Optional, List
 from datetime import datetime
 from domain.novel.entities.novel import Novel, AutopilotStatus, NovelStage
 from domain.novel.value_objects.novel_id import NovelId
-from domain.novel.repositories.novel_repository import NovelRepository
+from domain.novel.repositories import NovelRepository
 from infrastructure.persistence.database.connection import DatabaseConnection
 
 logger = logging.getLogger(__name__)

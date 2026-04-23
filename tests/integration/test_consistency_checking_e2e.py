@@ -15,8 +15,8 @@ from domain.novel.entities.plot_arc import PlotArc
 from domain.novel.value_objects.event_timeline import EventTimeline
 from domain.bible.value_objects.relationship_graph import RelationshipGraph
 from domain.novel.value_objects.novel_id import NovelId
-from domain.bible.repositories.bible_repository import BibleRepository
-from domain.novel.repositories.foreshadowing_repository import ForeshadowingRepository
+from domain.world.repositories import BibleRepository
+from domain.novel.repositories import ForeshadowingRepository
 
 
 class TestConsistencyCheckingEndToEnd:

@@ -5,8 +5,8 @@ from domain.novel.entities.novel import Novel, NovelStage
 from domain.novel.entities.chapter import Chapter
 from domain.novel.value_objects.novel_id import NovelId
 from domain.novel.value_objects.word_count import WordCount
-from domain.novel.repositories.novel_repository import NovelRepository
-from domain.novel.repositories.chapter_repository import ChapterRepository
+from domain.novel.repositories import NovelRepository
+from domain.novel.repositories import ChapterRepository
 from domain.shared.exceptions import EntityNotFoundError
 from application.core.dtos.novel_dto import NovelDTO
 from application.core.v1_length_tiers import (

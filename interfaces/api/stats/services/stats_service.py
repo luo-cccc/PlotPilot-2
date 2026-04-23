@@ -201,17 +201,59 @@ class StatsService:
     def get_writing_progress(self, slug: str, days: int = 30) -> List[WritingProgress]:
         """Get writing progress over time.
 
-        TODO: Implement in Week 2
-        - Track when chapters were created/modified
-        - Calculate daily word count
-        - Show progress trends
+        基于文件系统统计每日写作进度：
+        - 遍历 outline 中的章节
+        - 读取 body.md 的字数和修改时间
+        - 按日期聚合每日字数和完成章节数
 
         Args:
             slug: The book's slug (directory name)
             days: Number of days to look back (default 30)
 
         Returns:
-            Empty list for now, to be implemented in Week 2
+            List of WritingProgress objects for the last N days
         """
-        logger.info(f"Getting writing progress for: {slug}, days={days} (TODO: Week 2)")
-        return []
+        from collections import defaultdict
+        import os
+        from pathlib import Path
+
+        logger.info(f"Getting writing progress for: {slug}, days={days}")
+
+        outline = self.repository.get_book_outline(slug)
+        if not outline or "chapters" not in outline:
+            return []
+
+        daily_progress: dict[str, dict[str, int]] = defaultdict(lambda: {"words": 0, "chapters": 0})
+
+        for chapter_info in outline["chapters"]:
+            chapter_id = chapter_info.get("id")
+            if not chapter_id:
+                continue
+            chapter_path = self.repository.books_root / slug / "chapters" / f"ch-{chapter_id:04d}" / "body.md"
+            if not chapter_path.exists():
+                continue
+            content = self.repository.get_chapter_content(slug, chapter_id)
+            if not content:
+                continue
+            word_count = self.repository.count_words(content)
+            if word_count <= 0:
+                continue
+            mtime = os.path.getmtime(chapter_path)
+            date_str = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d")
+            daily_progress[date_str]["words"] += word_count
+            daily_progress[date_str]["chapters"] += 1
+
+        # 限制返回最近 N 天
+        cutoff = datetime.now() - __import__('datetime').timedelta(days=days)
+        result = []
+        for date_str in sorted(daily_progress.keys()):
+            dt = datetime.strptime(date_str, "%Y-%m-%d")
+            if dt >= cutoff:
+                result.append(WritingProgress(
+                    date=dt,
+                    words_written=daily_progress[date_str]["words"],
+                    chapters_completed=daily_progress[date_str]["chapters"],
+                ))
+
+        logger.info(f"Writing progress for {slug}: {len(result)} days of data")
+        return result

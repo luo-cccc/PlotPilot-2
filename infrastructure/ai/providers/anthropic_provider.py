@@ -80,9 +80,10 @@ class AnthropicProvider(BaseProvider):
         if base and base.endswith("/v1"):
             base = base[:-3]
 
+        _timeout = settings.timeout_seconds or 300.0
         official_client_kw = {
             "api_key": settings.api_key,
-            "timeout": 300.0,  # 5 分钟超时
+            "timeout": _timeout,
             "max_retries": 2,
             "default_headers": {
                 "User-Agent": "claude-cli/2.1.87 (external, cli)",
@@ -94,7 +95,7 @@ class AnthropicProvider(BaseProvider):
             official_client_kw["base_url"] = base
 
         # SDK 内置 httpx 默认 trust_env=True，会走系统 HTTP(S)_PROXY，本机代理 TLS 常导致 ConnectError。
-        _sdk_timeout = httpx.Timeout(300.0)
+        _sdk_timeout = httpx.Timeout(_timeout)
         self._http_client_sync = httpx.Client(timeout=_sdk_timeout, trust_env=False)
         self._http_client_async = httpx.AsyncClient(timeout=_sdk_timeout, trust_env=False)
         self.client = Anthropic(**official_client_kw, http_client=self._http_client_sync)
@@ -136,6 +137,10 @@ class AnthropicProvider(BaseProvider):
             # 如果指定了 response_format，传递给 API 强制 JSON 输出
             if config.response_format:
                 create_kwargs["response_format"] = config.response_format
+
+            # 透传场景化超时（轻量查询可设短超时，生成长文保持默认）
+            if config.timeout_seconds is not None:
+                create_kwargs["timeout"] = config.timeout_seconds
 
             # 使用 async_client 避免阻塞 asyncio 事件循环
             response = await self.async_client.messages.create(**create_kwargs)

@@ -2,7 +2,7 @@
 import json
 import logging
 from typing import Optional
-from domain.novel.repositories.timeline_repository import TimelineRepository
+from domain.novel.repositories import TimelineRepository
 from domain.novel.entities.timeline_registry import TimelineRegistry
 from domain.novel.value_objects.novel_id import NovelId
 from domain.novel.value_objects.timeline_event import TimelineEvent

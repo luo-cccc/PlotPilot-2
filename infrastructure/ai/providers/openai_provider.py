@@ -173,7 +173,7 @@ class OpenAIProvider(BaseProvider):
             "extra_headers": self.settings.extra_headers or None,
             "extra_query": self.settings.extra_query or None,
             "extra_body": self.settings.extra_body or None,
-            "timeout": self.settings.timeout_seconds,
+            "timeout": config.timeout_seconds if config.timeout_seconds is not None else self.settings.timeout_seconds,
         }
         if config.response_format:
             kwargs["response_format"] = config.response_format
@@ -199,6 +199,7 @@ class OpenAIProvider(BaseProvider):
             "input": [{"role": "user", "content": prompt.user}],
             "temperature": config.temperature,
             "max_output_tokens": config.max_tokens,
+            "timeout": config.timeout_seconds if config.timeout_seconds is not None else self.settings.timeout_seconds,
         }
         if self.settings.extra_body:
              kwargs.update(self.settings.extra_body)

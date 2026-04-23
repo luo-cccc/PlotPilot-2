@@ -17,13 +17,14 @@ from dataclasses import dataclass
 from application.world.services.bible_service import BibleService
 from domain.bible.services.relationship_engine import RelationshipEngine
 from domain.novel.services.storyline_manager import StorylineManager
-from domain.novel.repositories.novel_repository import NovelRepository
-from domain.novel.repositories.chapter_repository import ChapterRepository
-from domain.novel.repositories.plot_arc_repository import PlotArcRepository
-from domain.novel.repositories.foreshadowing_repository import ForeshadowingRepository
+from domain.novel.repositories import NovelRepository
+from domain.novel.repositories import ChapterRepository
+from domain.novel.repositories import PlotArcRepository
+from domain.novel.repositories import ForeshadowingRepository
 from domain.ai.services.vector_store import VectorStore
 from domain.ai.services.embedding_service import EmbeddingService
 from application.engine.services.context_budget_allocator import ContextBudgetAllocator
+from application.engine.theme.theme_registry import ThemeAgentRegistry
 
 if TYPE_CHECKING:
     from application.engine.dtos.scene_director_dto import SceneDirectorAnalysis
@@ -31,15 +32,24 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+_VALID_BEAT_FOCUSES = {"sensory", "dialogue", "action", "emotion", "suspense", "hook", "character_intro"}
+
 @dataclass
 class Beat:
     """微观节拍（Beat）
-    
+
     将章节大纲拆分为多个微观节拍，强制 AI 放慢节奏，增加感官细节。
     """
     description: str  # 节拍描述
     target_words: int  # 目标字数
     focus: str  # 聚焦点：sensory（感官）、dialogue（对话）、action（动作）、emotion（情绪）
+
+    def __post_init__(self):
+        if self.focus not in _VALID_BEAT_FOCUSES:
+            # 降级到默认值并记录
+            self.focus = "sensory"
+            import logging
+            logging.getLogger(__name__).warning(f"Beat focus '{self.focus}' 无效，降级为 sensory")
 
 
 class ContextBuilder:
@@ -77,6 +87,7 @@ class ContextBuilder:
         self.bible_repository = bible_repository
         self.chapter_element_repository = chapter_element_repository
         self.triple_repository = triple_repository
+        self._theme_registry: Optional[ThemeAgentRegistry] = None
 
         # 预算分配器（核心组件）
         self.budget_allocator = ContextBudgetAllocator(
@@ -90,6 +101,14 @@ class ContextBuilder:
             embedding_service=embedding_service,
         )
 
+    @property
+    def theme_registry(self) -> ThemeAgentRegistry:
+        """惰性初始化题材注册中心"""
+        if self._theme_registry is None:
+            self._theme_registry = ThemeAgentRegistry()
+            self._theme_registry.auto_discover()
+        return self._theme_registry
+
     def build_voice_anchor_system_section(self, novel_id: str) -> str:
         """Bible 角色声线/小动作锚点"""
         return self.bible_service.build_character_voice_anchor_section(novel_id)
@@ -101,6 +120,7 @@ class ContextBuilder:
         outline: str,
         max_tokens: int = 35000,
         scene_director: Optional[Dict[str, Any]] = None,
+        genre_preset: Optional[str] = None,
     ) -> str:
         """构建上下文（使用预算分配器）
         
@@ -110,16 +130,25 @@ class ContextBuilder:
             outline: 章节大纲
             max_tokens: 最大 token 数
             scene_director: 场记分析结果（可选）
+            genre_preset: 类型锚定文本（genre + world_preset）
         
         Returns:
             组装好的上下文字符串
         """
+        if scene_director is not None and not isinstance(scene_director, dict):
+            import logging
+            logging.getLogger(__name__).warning(
+                f"scene_director 类型错误: {type(scene_director).__name__}，已忽略"
+            )
+            scene_director = None
+
         allocation = self.budget_allocator.allocate(
             novel_id=novel_id,
             chapter_number=chapter_number,
             outline=outline,
             total_budget=max_tokens,
             scene_director=scene_director,
+            genre_preset=genre_preset,
         )
         
         return allocation.get_final_context()
@@ -131,6 +160,7 @@ class ContextBuilder:
         outline: str,
         max_tokens: int = 35000,
         scene_director: Optional[Dict[str, Any]] = None,
+        genre_preset: Optional[str] = None,
     ) -> Dict[str, Any]:
         """构建结构化上下文，返回详细信息
         
@@ -153,6 +183,7 @@ class ContextBuilder:
             outline=outline,
             total_budget=max_tokens,
             scene_director=scene_director,
+            genre_preset=genre_preset,
         )
         
         # 从 BudgetAllocation 中提取三层内容
@@ -190,32 +221,60 @@ class ContextBuilder:
             },
         }
 
-    def magnify_outline_to_beats(self, chapter_number: int, outline: str, target_chapter_words: int = 2500) -> List[Beat]:
+    def magnify_outline_to_beats(self, chapter_number: int, outline: str, target_chapter_words: int = 2500, genre: str = "") -> List[Beat]:
         """节拍放大器：将章节大纲拆分为微观节拍
         
         核心策略：
-        1. 识别大纲中的关键动作/事件
-        2. 为每个动作分配节拍，强制增加感官细节
-        3. 控制单章推进速度，避免节奏过载
+        1. 优先匹配 ThemeAgent 题材专项节拍模板
+        2. 识别大纲中的关键动作/事件
+        3. 为每个动作分配节拍，强制增加感官细节
+        4. 控制单章推进速度，避免节奏过载
         """
         beats = []
 
-        # 开篇黄金法则前三章特殊拦截
-        if chapter_number == 1:
+        # ★ 优先级最高：ThemeAgent 题材专项节拍模板
+        theme_agent = None
+        if genre:
+            try:
+                theme_agent = self.theme_registry.get_or_default(genre)
+            except Exception as e:
+                logger.warning(f"题材 Agent 查找失败: {e}")
+
+        if theme_agent:
+            # 开篇黄金法则：优先使用题材 Agent 的 opening beats
+            if chapter_number <= 3:
+                opening = theme_agent.get_opening_beats(chapter_number)
+                if opening:
+                    beats = [Beat(description=desc, target_words=tw, focus=focus) for desc, tw, focus in opening]
+                    logger.info(f"节拍放大器：使用题材 Agent '{genre}' 的开篇节拍（第{chapter_number}章）")
+
+            # 常规章节：按 priority 匹配 BeatTemplate
+            if not beats:
+                templates = theme_agent.get_beat_templates()
+                # 按 priority 降序排列
+                sorted_templates = sorted(templates, key=lambda t: t.priority, reverse=True)
+                for tmpl in sorted_templates:
+                    if any(kw in outline for kw in tmpl.keywords):
+                        beats = [Beat(description=desc, target_words=tw, focus=focus) for desc, tw, focus in tmpl.beats]
+                        logger.info(f"节拍放大器：匹配题材模板 '{tmpl.keywords}' (priority={tmpl.priority})")
+                        break
+
+        # 未命中题材模板，降级到硬编码逻辑
+        if not beats and chapter_number == 1:
             beats = [
                 Beat(description="开篇黄金法则：展现核心冲突，介绍主角出场，建立情感冲击（前300字内必须抓住读者）", target_words=500, focus="hook"),
                 Beat(description="剧情引入及人物初步互动：展现主角特质并暗示即将发生的事件", target_words=1000, focus="character_intro"),
                 Beat(description="世界观或当前场景细节：通过具体行动展现，不用抽象叙述", target_words=800, focus="sensory"),
                 Beat(description="埋下后续剧情伏笔或抛出首个悬念：铺垫第二章", target_words=700, focus="suspense"),
             ]
-        elif chapter_number == 2:
+        if not beats and chapter_number == 2:
             beats = [
                 Beat(description="承接首章悬念：深化关键人物关系，展现性格差异", target_words=800, focus="dialogue"),
                 Beat(description="推进主要情节线：引入新的次要冲突或阻碍", target_words=1200, focus="action"),
                 Beat(description="情绪细节及内心活动：展示人物面对变故的真实反映", target_words=600, focus="emotion"),
                 Beat(description="为第三章冲突高潮做气氛铺垫", target_words=400, focus="suspense"),
             ]
-        elif chapter_number == 3:
+        if not beats and chapter_number == 3:
             beats = [
                 Beat(description="前三章的剧情小结或高潮前奏：紧张气氛描写", target_words=600, focus="sensory"),
                 Beat(description="冲突爆发/悬念高潮：激烈的动作或对峙", target_words=1200, focus="action"),
@@ -223,14 +282,14 @@ class ContextBuilder:
                 Beat(description="建立长线悬念结局：为整卷后续发展铺设巨大好奇心", target_words=400, focus="suspense"),
             ]
         # 根据常规关键词回退
-        elif "争吵" in outline or "冲突" in outline or "质问" in outline:
+        if not beats and ("争吵" in outline or "冲突" in outline or "质问" in outline):
             beats = [
                 Beat(description="场景氛围描写：压抑的环境、紧张的气氛、人物的微表情", target_words=500, focus="sensory"),
                 Beat(description="冲突爆发：主角的质问、对方的反应、情绪的升级", target_words=800, focus="dialogue"),
                 Beat(description="情绪细节：内心独白、回忆闪回、痛苦的挣扎", target_words=700, focus="emotion"),
                 Beat(description="冲突结果：决裂、离开、或暂时妥协（不要轻易和好）", target_words=500, focus="action"),
             ]
-        elif "战斗" in outline or "打斗" in outline or "对决" in outline:
+        elif not beats and ("战斗" in outline or "打斗" in outline or "对决" in outline):
             beats = [
                 Beat(description="战前准备：环境描写、双方对峙、紧张的气氛", target_words=400, focus="sensory"),
                 Beat(description="第一回合：试探性攻击、展示能力、观察弱点", target_words=600, focus="action"),
@@ -238,7 +297,7 @@ class ContextBuilder:
                 Beat(description="转折点：意外发生、底牌揭露、或受伤", target_words=500, focus="emotion"),
                 Beat(description="战斗结束：胜负揭晓、战后状态、后续影响", target_words=300, focus="action"),
             ]
-        elif "发现" in outline or "真相" in outline or "揭露" in outline:
+        elif not beats and ("发现" in outline or "真相" in outline or "揭露" in outline):
             beats = [
                 Beat(description="线索汇聚：主角回忆之前的疑点、逐步推理", target_words=700, focus="emotion"),
                 Beat(description="真相揭露：关键证据出现、震惊的反应、世界观崩塌", target_words=1000, focus="dialogue"),
@@ -284,17 +343,17 @@ class ContextBuilder:
     _BEAT_PROMPT_ID = "beat-focus-instructions"
 
     def build_beat_prompt(self, beat: Beat, beat_index: int, total_beats: int) -> str:
-        """构建单个节拍的生成提示（指令从 prompts_defaults.json 统一读取）"""
-        from infrastructure.ai.prompt_loader import get_prompt_loader
+        """构建单个节拍的生成提示（指令从 PromptManager 统一读取，DB/JSON 双轨）"""
+        from infrastructure.ai.prompt_manager import get_prompt_manager
 
-        loader = get_prompt_loader()
+        mgr = get_prompt_manager()
 
         # 聚焦指令字典
-        focus_instructions = loader.get_directives_dict(self._BEAT_PROMPT_ID, "_focus_instructions")
+        focus_instructions = mgr.get_directives_dict(self._BEAT_PROMPT_ID, "_focus_instructions")
         instruction = focus_instructions.get(beat.focus, "")
 
         # 感官锚点轮转
-        sensory_rotation = loader.get_list_field(self._BEAT_PROMPT_ID, "_sensory_rotation")
+        sensory_rotation = mgr.get_list_field(self._BEAT_PROMPT_ID, "_sensory_rotation")
         if not sensory_rotation:
             # 安全降级
             sensory_rotation = [
@@ -306,14 +365,14 @@ class ContextBuilder:
         anchor_line = sensory_rotation[beat_index % len(sensory_rotation)]
 
         # 叙事义务
-        obligations = loader.get_field(self._BEAT_PROMPT_ID, "_obligations", {})
+        obligations = mgr.get_field(self._BEAT_PROMPT_ID, "_obligations", {})
         if isinstance(obligations, dict):
             obligation = obligations.get(beat.focus, obligations.get("default", "叙事义务：推进情节或深化人物。"))
         else:
             obligation = "叙事义务：推进情节或深化人物。"
 
-        # 使用 PromptLoader 渲染模板
-        return loader.render(self._BEAT_PROMPT_ID, template_field="user_template", variables={
+        # 使用 PromptManager 渲染模板
+        return mgr.render_field(self._BEAT_PROMPT_ID, template_field="user_template", variables={
             "beat_index": beat_index + 1,
             "total_beats": total_beats,
             "target_words": beat.target_words,

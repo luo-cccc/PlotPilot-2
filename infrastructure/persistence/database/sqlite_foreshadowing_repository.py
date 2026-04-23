@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Optional
 
 from domain.novel.entities.foreshadowing_registry import ForeshadowingRegistry
-from domain.novel.repositories.foreshadowing_repository import ForeshadowingRepository
+from domain.novel.repositories import ForeshadowingRepository
 from domain.novel.value_objects.novel_id import NovelId
 from infrastructure.persistence.database.connection import DatabaseConnection
 from infrastructure.persistence.mappers.foreshadowing_mapper import ForeshadowingMapper

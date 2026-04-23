@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Optional
 
 from domain.novel.entities.plot_arc import PlotArc
-from domain.novel.repositories.plot_arc_repository import PlotArcRepository
+from domain.novel.repositories import PlotArcRepository
 from domain.novel.value_objects.novel_id import NovelId
 from domain.novel.value_objects.plot_point import PlotPoint, PlotPointType
 from domain.novel.value_objects.tension_level import TensionLevel

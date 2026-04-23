@@ -2,10 +2,7 @@
 import re
 from typing import List, Optional
 
-from domain.novel.repositories.voice_fingerprint_repository import (
-    VoiceFingerprintRepository,
-)
-from domain.novel.repositories.voice_vault_repository import VoiceVaultRepository
+from domain.novel.repositories import VoiceFingerprintRepository, VoiceVaultRepository
 
 
 class VoiceFingerprintService:

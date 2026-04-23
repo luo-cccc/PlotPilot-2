@@ -16,10 +16,10 @@ from domain.novel.value_objects.timeline_event import TimelineEvent
 from domain.novel.entities.storyline import Storyline
 from domain.novel.value_objects.storyline_type import StorylineType
 from domain.novel.value_objects.storyline_status import StorylineStatus
-from domain.bible.repositories.bible_repository import BibleRepository
-from domain.novel.repositories.foreshadowing_repository import ForeshadowingRepository
-from domain.novel.repositories.timeline_repository import TimelineRepository
-from domain.novel.repositories.storyline_repository import StorylineRepository
+from domain.world.repositories import BibleRepository
+from domain.novel.repositories import ForeshadowingRepository
+from domain.novel.repositories import TimelineRepository
+from domain.novel.repositories import StorylineRepository
 from domain.novel.entities.foreshadowing_registry import ForeshadowingRegistry
 from domain.novel.entities.timeline_registry import TimelineRegistry
 

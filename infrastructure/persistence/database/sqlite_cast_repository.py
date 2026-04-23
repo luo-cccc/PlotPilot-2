@@ -3,7 +3,7 @@ import json
 import logging
 from typing import Optional
 from domain.cast.aggregates.cast_graph import CastGraph
-from domain.cast.repositories.cast_repository import CastRepository
+from domain.world.repositories import CastRepository
 from domain.novel.value_objects.novel_id import NovelId
 from infrastructure.persistence.mappers.cast_mapper import CastMapper
 

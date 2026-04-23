@@ -16,7 +16,7 @@ from domain.structure.chapter_element import ChapterElement, ElementType, Relati
 from domain.novel.entities.chapter import Chapter, ChapterStatus
 from domain.novel.value_objects.novel_id import NovelId
 from domain.novel.value_objects.chapter_id import ChapterId
-from domain.novel.repositories.chapter_repository import ChapterRepository
+from domain.novel.repositories import ChapterRepository
 from infrastructure.persistence.database.story_node_repository import StoryNodeRepository
 from infrastructure.persistence.database.chapter_element_repository import ChapterElementRepository
 from domain.ai.services.llm_service import LLMService, GenerationConfig
@@ -2191,7 +2191,7 @@ class ContinuousPlanningService:
             # 轨道二：获取待回收伏笔
             if hasattr(self, 'chapter_repository') and self.chapter_repository:
                 try:
-                    from domain.novel.repositories.foreshadowing_repository import ForeshadowingRepository
+                    from domain.novel.repositories import ForeshadowingRepository
                     from domain.novel.value_objects.novel_id import NovelId
                     
                     # 尝试获取伏笔仓库（通过依赖注入或直接创建）

@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from domain.bible.entities.bible import Bible
-from domain.bible.repositories.bible_repository import BibleRepository
+from domain.world.repositories import BibleRepository
 from domain.novel.value_objects.novel_id import NovelId
 from infrastructure.persistence.database.connection import DatabaseConnection
 from infrastructure.persistence.mappers.bible_mapper import BibleMapper

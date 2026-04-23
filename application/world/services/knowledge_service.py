@@ -1,10 +1,12 @@
 """Knowledge application service"""
+import asyncio
+import concurrent.futures
 import logging
 from typing import Optional, List, Dict, Any
 from domain.knowledge.story_knowledge import StoryKnowledge
 from domain.knowledge.chapter_summary import ChapterSummary
 from domain.knowledge.knowledge_triple import KnowledgeTriple
-from domain.knowledge.repositories.knowledge_repository import KnowledgeRepository
+from domain.world.repositories import KnowledgeRepository
 from domain.shared.exceptions import EntityNotFoundError
 
 logger = logging.getLogger(__name__)
@@ -23,6 +25,7 @@ class KnowledgeService:
             knowledge_repository: 知识仓储
         """
         self.knowledge_repository = knowledge_repository
+        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 
     def get_knowledge(self, novel_id: str) -> StoryKnowledge:
         """获取知识图谱
@@ -299,8 +302,7 @@ class KnowledgeService:
             async def _load():
                 return await triple_repo.get_by_novel(novel_id)
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                triples = pool.submit(lambda: asyncio.run(_load())).result()
+            triples = self._executor.submit(lambda: asyncio.run(_load())).result()
 
             if not triples:
                 logger.info(f"No triples found in DB for {novel_id}")
@@ -327,8 +329,7 @@ class KnowledgeService:
             async def _index():
                 return await indexing_service.index_triples_batch(novel_id, triple_dicts)
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                indexed_count = pool.submit(lambda: asyncio.run(_index())).result()
+            indexed_count = self._executor.submit(lambda: asyncio.run(_index())).result()
 
             logger.info(f"Auto-indexed {indexed_count} triples for {novel_id}")
             return indexed_count

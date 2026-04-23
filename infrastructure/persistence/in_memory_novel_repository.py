@@ -5,7 +5,7 @@
 from typing import List, Optional, Dict
 from domain.novel.entities.novel import Novel, AutopilotStatus
 from domain.novel.value_objects.novel_id import NovelId
-from domain.novel.repositories.novel_repository import NovelRepository
+from domain.novel.repositories import NovelRepository
 
 
 class InMemoryNovelRepository(NovelRepository):

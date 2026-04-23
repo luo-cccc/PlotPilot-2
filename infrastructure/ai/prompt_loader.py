@@ -193,20 +193,3 @@ class PromptLoader:
 # ------------------------------------------------------------------
 # 便捷函数（推荐使用方式）
 # ------------------------------------------------------------------
-
-
-def get_prompt_loader() -> PromptLoader:
-    """获取全局 PromptLoader 单例。"""
-    return PromptLoader()
-
-
-def get_directives(prompt_id: str) -> Dict[str, str]:
-    """快捷方式：获取指令字典。"""
-    return get_prompt_loader().get_directives_dict(prompt_id)
-
-
-def get_prompt_text(
-    prompt_id: str, field: str = "user_template"
-) -> str:
-    """快捷方式：获取某个字段的原始文本。"""
-    return get_prompt_loader().get_field(prompt_id, field, "")

@@ -1,7 +1,7 @@
 """Macro Refactor Scanner Service"""
 import logging
 from typing import List, Optional, Dict, Set
-from domain.novel.repositories.narrative_event_repository import NarrativeEventRepository
+from domain.novel.repositories import NarrativeEventRepository
 from application.audit.dtos.macro_refactor_dto import LogicBreakpoint
 
 logger = logging.getLogger(__name__)

@@ -83,6 +83,8 @@ class ChapterAftermathPipeline:
         novel_id: str,
         chapter_number: int,
         content: str,
+        precomputed_voice_result: Optional[Dict[str, Any]] = None,
+        force: bool = False,
     ) -> Dict[str, Any]:
         """保存正文后执行完整管线。返回文风结果供托管/审计门控使用。
 
@@ -101,41 +103,64 @@ class ChapterAftermathPipeline:
             logger.debug("aftermath 跳过：正文为空 novel=%s ch=%s", novel_id, chapter_number)
             return out
 
-        # 1) 叙事 + 向量 + 故事线 + 张力 + 对话（与 chapter_narrative_sync 一致）
-        try:
-            from application.world.services.chapter_narrative_sync import (
-                sync_chapter_narrative_after_save,
-            )
+        # 幂等保护：非 force 模式下，若本章已存在 style_scores 则跳过 narrative sync
+        already_processed = False
+        if not force and self._chapter_repository:
+            try:
+                from domain.novel.value_objects.novel_id import NovelId
+                ch = self._chapter_repository.get_by_novel_and_number(
+                    NovelId(novel_id), chapter_number
+                )
+                already_processed = bool(ch and getattr(ch, "style_scores", None))
+                if already_processed:
+                    logger.info(
+                        "aftermath 跳过 narrative_sync：本章已处理过 novel=%s ch=%s",
+                        novel_id,
+                        chapter_number,
+                    )
+            except Exception:
+                pass  # 降级：查询失败继续执行
 
-            sync_flags = await sync_chapter_narrative_after_save(
-                novel_id,
-                chapter_number,
-                content,
-                self._knowledge,
-                self._indexing,
-                self._llm,
-                triple_repository=self._triple_repository,
-                foreshadowing_repo=self._foreshadowing_repository,
-                storyline_repository=self._storyline_repository,
-                chapter_repository=self._chapter_repository,
-                plot_arc_repository=self._plot_arc_repository,
-                narrative_event_repository=self._narrative_event_repository,
-            )
-            out["narrative_sync_ok"] = True
-            out["vector_stored"] = bool(sync_flags.get("vector_stored"))
-            out["foreshadow_stored"] = bool(sync_flags.get("foreshadow_stored"))
-            out["triples_extracted"] = bool(sync_flags.get("triples_extracted"))
-        except Exception as e:
-            logger.warning(
-                "叙事同步/向量失败 novel=%s ch=%s: %s", novel_id, chapter_number, e
-            )
+        # 1) 叙事 + 向量 + 故事线 + 张力 + 对话（与 chapter_narrative_sync 一致）
+        if not already_processed:
+            try:
+                from application.world.services.chapter_narrative_sync import (
+                    sync_chapter_narrative_after_save,
+                )
+
+                sync_flags = await sync_chapter_narrative_after_save(
+                    novel_id,
+                    chapter_number,
+                    content,
+                    self._knowledge,
+                    self._indexing,
+                    self._llm,
+                    triple_repository=self._triple_repository,
+                    foreshadowing_repo=self._foreshadowing_repository,
+                    storyline_repository=self._storyline_repository,
+                    chapter_repository=self._chapter_repository,
+                    plot_arc_repository=self._plot_arc_repository,
+                    narrative_event_repository=self._narrative_event_repository,
+                )
+                out["narrative_sync_ok"] = True
+                out["vector_stored"] = bool(sync_flags.get("vector_stored"))
+                out["foreshadow_stored"] = bool(sync_flags.get("foreshadow_stored"))
+                out["triples_extracted"] = bool(sync_flags.get("triples_extracted"))
+            except Exception as e:
+                logger.warning(
+                    "叙事同步/向量失败 novel=%s ch=%s: %s", novel_id, chapter_number, e
+                )
 
         # 2) 文风（落库 chapter_style_scores）
-        # 支持 LLM 模式（异步）和统计模式（同步）
+        # 支持外部传入预计算结果，避免 daemon 预检与管线重复评分
         if self._voice:
             try:
-                # 检查是否使用 LLM 模式
-                if getattr(self._voice, "use_llm_mode", False):
+                if precomputed_voice_result:
+                    vr = precomputed_voice_result
+                    logger.debug(
+                        "文风评分使用预计算结果 novel=%s ch=%s", novel_id, chapter_number
+                    )
+                elif getattr(self._voice, "use_llm_mode", False):
                     vr = await self._voice.score_chapter_async(
                         novel_id=novel_id,
                         chapter_number=chapter_number,

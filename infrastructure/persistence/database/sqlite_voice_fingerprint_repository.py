@@ -2,9 +2,7 @@
 from typing import Optional
 from uuid import uuid4
 
-from domain.novel.repositories.voice_fingerprint_repository import (
-    VoiceFingerprintRepository,
-)
+from domain.novel.repositories import VoiceFingerprintRepository
 
 
 class SQLiteVoiceFingerprintRepository(VoiceFingerprintRepository):

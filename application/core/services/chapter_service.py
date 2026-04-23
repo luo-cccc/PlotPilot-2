@@ -5,8 +5,8 @@ import re
 from domain.novel.entities.chapter import Chapter, ChapterStatus
 from domain.novel.value_objects.chapter_id import ChapterId
 from domain.novel.value_objects.novel_id import NovelId
-from domain.novel.repositories.chapter_repository import ChapterRepository
-from domain.novel.repositories.novel_repository import NovelRepository
+from domain.novel.repositories import ChapterRepository
+from domain.novel.repositories import NovelRepository
 from domain.shared.exceptions import EntityNotFoundError
 from application.core.dtos.chapter_dto import ChapterDTO
 from application.audit.dtos.chapter_review_dto import ChapterReviewDTO

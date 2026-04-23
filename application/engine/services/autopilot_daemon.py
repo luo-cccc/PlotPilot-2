@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional
 from domain.novel.entities.novel import Novel, NovelStage, AutopilotStatus
 from domain.novel.entities.chapter import ChapterStatus
 from domain.novel.value_objects.novel_id import NovelId
-from domain.novel.repositories.novel_repository import NovelRepository
+from domain.novel.repositories import NovelRepository
 from domain.ai.services.llm_service import LLMService, GenerationConfig
 from domain.ai.value_objects.prompt import Prompt
 from application.engine.services.context_builder import ContextBuilder
@@ -28,6 +28,8 @@ from application.engine.services.style_constraint_builder import build_style_sum
 from application.ai.llm_output_sanitize import strip_reasoning_artifacts
 from application.ai.llm_retry_policy import LLM_MAX_TOTAL_ATTEMPTS
 from application.workflows.beat_continuation import format_prior_draft_for_prompt
+from application.core.premise_genre_world import parse_genre_world_from_premise
+from application.engine.services.context_builder import Beat
 from domain.novel.value_objects.chapter_id import ChapterId
 from domain.novel.value_objects.word_count import WordCount
 
@@ -67,6 +69,8 @@ class AutopilotDaemon:
         aftermath_pipeline: Optional[ChapterAftermathPipeline] = None,
         volume_summary_service=None,
         foreshadowing_repository=None,
+        beat_sheet_service=None,
+        scene_director_service=None,
     ):
         self.novel_repository = novel_repository
         self.llm_service = llm_service
@@ -82,6 +86,9 @@ class AutopilotDaemon:
         self.aftermath_pipeline = aftermath_pipeline
         self.volume_summary_service = volume_summary_service
         self.foreshadowing_repository = foreshadowing_repository
+        self.beat_sheet_service = beat_sheet_service
+        self.scene_director_service = scene_director_service
+        self.orchestrator = None  # 多模型编排器（可选，暂未启用）
 
         # 惰性初始化 VolumeSummaryService
         if not self.volume_summary_service and llm_service and story_node_repo:
@@ -259,6 +266,11 @@ class AutopilotDaemon:
                 logger.info(f"[{novel.novel_id}] 用户已停止自动驾驶，跳过本轮")
                 return
 
+            # 熔断器状态同步：CB 已恢复 CLOSED 时，重置小说的连续失败计数
+            if self.circuit_breaker and self.circuit_breaker.state == "closed" and (novel.consecutive_error_count or 0) > 0:
+                logger.debug(f"[{novel.novel_id}] 熔断器已恢复，重置连续失败计数")
+                novel.consecutive_error_count = 0
+
             stage_name = novel.current_stage.value
             logger.debug(f"[{novel.novel_id}] 当前阶段: {stage_name}")
 
@@ -275,14 +287,29 @@ class AutopilotDaemon:
                 logger.info(f"[{novel.novel_id}] 🔍 开始审计")
                 await self._handle_auditing(novel)
             elif novel.current_stage == NovelStage.PAUSED_FOR_REVIEW:
-                # 全自动模式：跳过审阅，直接进入下一阶段
+                # 全自动模式：跳过审阅，根据当前幕下是否已有章节节点决定下一阶段
                 if getattr(novel, 'auto_approve_mode', False):
-                    logger.info(f"[{novel.novel_id}] 🚀 全自动模式：跳过人工审阅")
-                    # 根据当前状态自动进入下一阶段
-                    # 宏观规划完成后 -> 幕级规划
-                    # 幕级规划完成后 -> 写作
-                    # 写作完成后 -> 审计
-                    novel.current_stage = NovelStage.ACT_PLANNING
+                    nid = novel.novel_id.value
+                    ca = getattr(novel, 'current_act', 0) or 0
+                    target_act_number = (ca or 0) + 1
+                    all_nodes = await asyncio.to_thread(self.story_node_repo.get_by_novel_sync, nid)
+                    act_nodes = sorted(
+                        [n for n in all_nodes if (n.node_type.value if hasattr(n.node_type, "value") else str(n.node_type)) == "act"],
+                        key=lambda n: n.number,
+                    )
+                    target_act = next((n for n in act_nodes if n.number == target_act_number), None)
+                    has_chapters = False
+                    if target_act:
+                        children = await asyncio.to_thread(self.story_node_repo.get_children_sync, target_act.id)
+                        for ch in children:
+                            t = ch.node_type.value if hasattr(ch.node_type, "value") else str(ch.node_type)
+                            if t == "chapter":
+                                has_chapters = True
+                                break
+                    next_stage = NovelStage.WRITING if has_chapters else NovelStage.ACT_PLANNING
+                    novel.current_stage = next_stage
+                    novel.autopilot_status = AutopilotStatus.RUNNING
+                    logger.info(f"[{novel.novel_id}] 🚀 全自动模式：跳过审阅 → {next_stage.value}")
                     self._save_novel_state(novel)
                     return
                 else:
@@ -446,12 +473,21 @@ class AutopilotDaemon:
 
             if not target_act:
                 logger.error(f"[{novel.novel_id}] 找不到第 {target_act_number} 幕，且动态生成失败")
-                novel.current_stage = NovelStage.WRITING
+                novel.current_act += 1
+                if novel.current_act > 50:
+                    logger.error(f"[{novel.novel_id}] 幕号超过上限 50，进入 ERROR 状态")
+                    novel.autopilot_status = AutopilotStatus.ERROR
+                    self._flush_novel(novel)
+                    return
+                novel.current_stage = NovelStage.ACT_PLANNING
                 self._flush_novel(novel)
                 return
 
         # 检查该幕下是否已有章节节点（避免重复规划）
-        act_children = self.story_node_repo.get_children_sync(target_act.id)
+        import asyncio
+        act_children = await asyncio.to_thread(
+            self.story_node_repo.get_children_sync, target_act.id
+        )
         confirmed_chapters = [n for n in act_children if n.node_type.value == "chapter"]
 
         just_created_chapter_plan = False
@@ -476,19 +512,23 @@ class AutopilotDaemon:
 
             raw = plan_result.get("chapters")
             chapters_data: List[Dict[str, Any]] = raw if isinstance(raw, list) else []
+            used_fallback = False
             if not chapters_data:
                 logger.warning(
                     f"[{novel.novel_id}] 幕 {target_act_number} 未得到有效章节规划，使用占位章节落库"
                 )
                 chapters_data = self._fallback_act_chapters_plan(target_act, chapter_budget)
+                used_fallback = True
 
             await self.planning_service.confirm_act_planning(
                 act_id=target_act.id,
                 chapters=chapters_data
             )
-            just_created_chapter_plan = True
+            just_created_chapter_plan = not used_fallback
 
-        act_children = self.story_node_repo.get_children_sync(target_act.id)
+        act_children = await asyncio.to_thread(
+            self.story_node_repo.get_children_sync, target_act.id
+        )
         confirmed_chapters = [n for n in act_children if n.node_type.value == "chapter"]
 
         # current_act 为 0-based 幕索引（与 Novel 实体一致），勿写入 1-based 的 target_act_number
@@ -561,6 +601,35 @@ class AutopilotDaemon:
         chapter_num = next_chapter_node.number
         outline = next_chapter_node.outline or next_chapter_node.description or next_chapter_node.title
 
+        # P1-7: 大纲降级补全 — 仅有 title 时用 LLM 从前文推断章节方向
+        outline_source = 'outline' if next_chapter_node.outline else ('description' if next_chapter_node.description else 'title')
+        if outline_source == 'title' and outline and len(outline) < 30 and self.llm_service:
+            try:
+                recent_chapters = await asyncio.to_thread(
+                    self.chapter_repository.list_by_novel, novel.novel_id.value
+                ) if self.chapter_repository else []
+                recent_summary = ''
+                for rc in recent_chapters[-2:]:
+                    rc_title = getattr(rc, 'title', '') or ''
+                    rc_content = getattr(rc, 'content', '') or ''
+                    if rc_content:
+                        rc_summary = rc_content[:500] + "..." if len(rc_content) > 500 else rc_content
+                        recent_summary += "前文《" + rc_title + "》摘要：" + rc_summary + "\n"
+
+                if recent_summary:
+                    prompt = Prompt(
+                        system='你是资深小说编辑。根据前文和章节标题，生成50-100字的章节大纲。只输出大纲，不要其他内容。',
+                        user="章节标题：" + outline + "\n\n" + recent_summary
+                    )
+                    config = GenerationConfig(max_tokens=200, temperature=0.8)
+                    enhanced = await self._generate_with_strategy(prompt, config, stage='planning', novel_id=novel.novel_id.value)
+                    enhanced_text = enhanced.content.strip() if hasattr(enhanced, 'content') else str(enhanced).strip()
+                    if enhanced_text and len(enhanced_text) > len(outline):
+                        logger.info(f'[{novel.novel_id}] 大纲补全："{outline}" -> "{enhanced_text[:80]}"')
+                        outline = enhanced_text
+            except Exception as e:
+                logger.warning(f'大纲补全失败（不影响主流程）: {e}')
+
         if needs_buffer:
             outline = f"【缓冲章：日常过渡】{outline}。主角战后休整，与配角闲聊，展示收获，节奏轻松。"
 
@@ -571,13 +640,43 @@ class AutopilotDaemon:
             logger.info(f"[{novel.novel_id}] 用户已停止，跳过本章（上下文组装前）")
             return
 
+        # 3.5 解析类型锚定（genre + world_preset）
+        genre_preset = ""
+        genre_key = ""
+        try:
+            premise_text = getattr(novel, 'premise', '') or ''
+            genre_key, world_preset = parse_genre_world_from_premise(premise_text)
+            if genre_key or world_preset:
+                genre_preset = f"【类型锚定】你正在撰写一部{genre_key}小说"
+                if world_preset:
+                    genre_preset += f"，世界观基调：{world_preset}"
+                genre_preset += "。所有叙事选择必须符合该类型的读者期待与类型规约。"
+                logger.info(f"[{novel.novel_id}] 类型锚定: genre={genre_key}, world={world_preset}")
+        except Exception as e:
+            logger.warning(f"类型锚定解析失败: {e}")
+
+        # 3.7 场景导演分析（SceneDirector）
+        scene_director_result = None
+        if self.scene_director_service:
+            try:
+                scene_director_result = await self.scene_director_service.analyze(chapter_num, outline)
+                if scene_director_result and scene_director_result.characters:
+                    logger.info(f"[{novel.novel_id}] 场景导演: POV={scene_director_result.pov}, 角色={scene_director_result.characters}, 情绪={scene_director_result.emotional_state}")
+            except Exception as e:
+                logger.warning(f"场景导演分析失败（不影响主流程）: {e}")
+
+        # Convert SceneDirectorAnalysis to dict for context assembly
+        scene_director_dict = None
+        if scene_director_result:
+            scene_director_dict = scene_director_result.model_dump() if hasattr(scene_director_result, 'model_dump') else None
+
         # 4. 组装上下文：唯一主路径 prepare_chapter_generation；失败则三层同构降级，最后才扁平洋葱
         bundle = None
         context = ""
         if self.chapter_workflow:
             try:
                 bundle = self.chapter_workflow.prepare_chapter_generation(
-                    novel.novel_id.value, chapter_num, outline, scene_director=None
+                    novel.novel_id.value, chapter_num, outline, scene_director=scene_director_dict
                 )
                 context = bundle["context"]
                 logger.info(
@@ -593,7 +692,7 @@ class AutopilotDaemon:
                         novel.novel_id.value,
                         chapter_num,
                         outline,
-                        scene_director=None,
+                        scene_director=scene_director_dict,
                         max_tokens=20000,
                     )
                     context = bundle["context"]
@@ -610,6 +709,8 @@ class AutopilotDaemon:
                     chapter_number=chapter_num,
                     outline=outline,
                     max_tokens=20000,
+                    scene_director=scene_director_dict,
+                    genre_preset=genre_preset or None,
                 )
             except Exception as e:
                 logger.warning(f"ContextBuilder.build_context 失败：{e}")
@@ -629,13 +730,47 @@ class AutopilotDaemon:
             except Exception:
                 voice_anchors = ""
 
-        # 5. 节拍放大
+        # 5. 节拍放大（优先 BeatSheetService LLM 生成，降级到关键词硬编码）
         beats = []
-        if self.context_builder:
-            tw = getattr(novel, "target_words_per_chapter", None) or 2500
+        tw = getattr(novel, "target_words_per_chapter", None) or 2500
+
+        # 5a. 优先路径：BeatSheetService LLM 生成精细节拍表
+        if self.beat_sheet_service and next_chapter_node:
+            try:
+                chapter_id = str(getattr(next_chapter_node, 'chapter_id', '') or getattr(next_chapter_node, 'id', ''))
+                if chapter_id:
+                    beat_sheet = await self.beat_sheet_service.generate_beat_sheet(chapter_id, outline)
+                    if beat_sheet and beat_sheet.scenes:
+                        # Scene → Beat 转换：tone 映射到 focus
+                        _TONE_FOCUS_MAP = {"紧张": "action", "温馨": "dialogue", "悲伤": "emotion", "悬疑": "suspense", "激烈": "action", "轻松": "sensory"}
+                        for scene in beat_sheet.scenes:
+                            focus = _TONE_FOCUS_MAP.get(scene.tone or "", "sensory") if scene.tone else "sensory"
+                            desc_parts = [f"{scene.title}：{scene.goal}"]
+                            if scene.pov_character and scene.pov_character != "主角":
+                                desc_parts.append(f"视点：{scene.pov_character}")
+                            if scene.location:
+                                desc_parts.append(f"地点：{scene.location}")
+                            beats.append(Beat(description=" | ".join(desc_parts), target_words=scene.estimated_words, focus=focus))
+                        logger.info(f"[{novel.novel_id}] 节拍放大：BeatSheetService 生成 {len(beats)} 个精细节拍")
+            except Exception as e:
+                logger.warning(f"BeatSheetService 生成失败，降级到关键词匹配: {e}")
+                beats = []
+
+        # 5b. 降级路径：关键词硬编码 + ThemeAgent
+        if not beats and self.context_builder:
             beats = self.context_builder.magnify_outline_to_beats(
-                chapter_num, outline, target_chapter_words=int(tw)
+                chapter_num, outline, target_chapter_words=int(tw), genre=genre_key
             )
+
+        # 5c. 节拍质量检查：至少 2 个节拍，总字数不低于目标 60%
+        if beats:
+            total_beat_words = sum(b.target_words for b in beats)
+            if len(beats) < 2:
+                logger.warning(f"[{novel.novel_id}] 节拍质量检查：仅 {len(beats)} 个节拍，降级为无节拍单段生成")
+                beats = []
+            elif total_beat_words < int(tw) * 0.6:
+                logger.warning(f"[{novel.novel_id}] 节拍质量检查：总字数 {total_beat_words} 低于目标 {tw} 的 60%，降级为无节拍单段生成")
+                beats = []
 
         if not self._is_still_running(novel):
             logger.info(f"[{novel.novel_id}] 用户已停止（节拍拆分后）")
@@ -657,7 +792,7 @@ class AutopilotDaemon:
                     logger.info(f"[{novel.novel_id}] 用户已停止，中断本章（节拍 {i + 1}/{len(beats)} 前）")
                     return
 
-                beat_prompt = self.context_builder.build_beat_prompt(beat, i, len(beats))
+                beat_prompt = self.context_builder.build_beat_prompt(beat, i, len(beats)) if self.context_builder else f"节拍 {i+1}/{len(beats)}：{beat.description}"
                 if use_wf:
                     prompt = self.chapter_workflow.build_chapter_prompt(
                         bundle["context"],
@@ -673,7 +808,7 @@ class AutopilotDaemon:
                         chapter_draft_so_far=chapter_content,
                     )
                     max_tokens = int(beat.target_words * 1.5)
-                    cfg = GenerationConfig(max_tokens=max_tokens, temperature=0.85)
+                    cfg = GenerationConfig(max_tokens=max_tokens, temperature=0.8)
                     beat_content = await self._stream_llm_with_stop_watch(prompt, cfg, novel=novel)
                 else:
                     beat_content = await self._stream_one_beat(
@@ -684,11 +819,23 @@ class AutopilotDaemon:
                         novel=novel,
                         voice_anchors=voice_anchors,
                         chapter_draft_so_far=chapter_content,
+                        scene_director=scene_director_dict,
                     )
 
-                if beat_content.strip():
-                    chapter_content += ("\n\n" if chapter_content else "") + beat_content
-                    await self._upsert_chapter_content(novel, next_chapter_node, chapter_content, status="draft")
+                if not beat_content.strip():
+                    logger.warning(f"[{novel.novel_id}] 节拍 {i+1} 空输出，重试...")
+                    beat_content = await self._stream_llm_with_stop_watch(prompt, cfg, novel=novel)
+                    if not beat_content.strip():
+                        logger.error(f"[{novel.novel_id}] 节拍 {i+1} 重试仍为空，跳过")
+                        if self.circuit_breaker:
+                            self.circuit_breaker.record_failure()
+                        novel.consecutive_error_count = (novel.consecutive_error_count or 0) + 1
+                        novel.current_beat_index = i
+                        self._flush_novel(novel)
+                        return
+
+                chapter_content += ("\n\n" if chapter_content else "") + beat_content
+                await self._upsert_chapter_content(novel, next_chapter_node, chapter_content, status="draft")
 
                 if not self._is_still_running(novel):
                     novel.current_beat_index = i
@@ -717,11 +864,12 @@ class AutopilotDaemon:
                     style_summary=bundle["style_summary"],
                     voice_anchors=voice_anchors,
                 )
-                cfg = GenerationConfig(max_tokens=3000, temperature=0.85)
+                cfg = GenerationConfig(max_tokens=10000, temperature=0.8)
                 beat_content = await self._stream_llm_with_stop_watch(prompt, cfg, novel=novel)
             else:
                 beat_content = await self._stream_one_beat(
-                    outline, context, None, None, novel=novel, voice_anchors=voice_anchors
+                    outline, context, None, None, novel=novel, voice_anchors=voice_anchors,
+                    scene_director=scene_director_dict,
                 )
             if not self._is_still_running(novel):
                 logger.info(f"[{novel.novel_id}] 用户已停止，单段生成已中断")
@@ -739,7 +887,7 @@ class AutopilotDaemon:
         if use_wf and chapter_content.strip():
             try:
                 await self.chapter_workflow.post_process_generated_chapter(
-                    novel.novel_id.value, chapter_num, outline, chapter_content, scene_director=None
+                    novel.novel_id.value, chapter_num, outline, chapter_content, scene_director=scene_director_dict
                 )
                 logger.info(f"[{novel.novel_id}]    ✅ post_process_generated_chapter 完成")
             except Exception as e:
@@ -758,14 +906,21 @@ class AutopilotDaemon:
                 )
                 return
 
-        # 8. 章节完成，标记 completed
-        await self._upsert_chapter_content(novel, next_chapter_node, chapter_content, status="completed")
+        # 8. 章节完成，标记 completed（内容不足目标 60% 则不标完成，等下一轮补写）
+        MIN_CHAPTER_WORDS = int(tw * 0.6) if (tw := getattr(novel, 'target_words_per_chapter', None) or 2500) else 1500
+        prior_content_len = len(chapter_content)
+        if prior_content_len < MIN_CHAPTER_WORDS:
+            logger.warning(f"[{novel.novel_id}] 第 {chapter_num} 章正文不足 {MIN_CHAPTER_WORDS} 字（实际 {prior_content_len}），暂标记 draft，等 AUDITING 补写")
+            await self._upsert_chapter_content(novel, next_chapter_node, chapter_content, status="draft")
+        else:
+            await self._upsert_chapter_content(novel, next_chapter_node, chapter_content, status="completed")
 
         # 8. 更新计数器，重置节拍索引
         novel.current_auto_chapters = (novel.current_auto_chapters or 0) + 1
         novel.current_chapter_in_act += 1
         novel.current_beat_index = 0
         novel.current_stage = NovelStage.AUDITING
+        novel._prior_content_len = prior_content_len
         self._flush_novel(novel)
 
         logger.info(f"[{novel.novel_id}] 🎉 第 {chapter_num} 章完成：{len(chapter_content)} 字 (共 {novel.current_auto_chapters}/{novel.target_chapters} 章)")
@@ -822,6 +977,7 @@ class AutopilotDaemon:
                     novel.novel_id.value,
                     chapter_num,
                     content,
+                    precomputed_voice_result=drift_result,
                 )
                 logger.info(
                     f"[{novel.novel_id}] 章后管线完成: 相似度={drift_result.get('similarity_score')}, "
@@ -882,9 +1038,17 @@ class AutopilotDaemon:
                 f"[{novel.novel_id}] 文风告警来自历史窗口，当前章节相似度未低于阈值，保留本章"
             )
 
+        MIN_BOOK_WORDS = 800
+        actual_len = len(chapter.content or "")
+        if actual_len < MIN_BOOK_WORDS:
+            logger.warning(f"[{novel.novel_id}] 第 {chapter_num} 章正文仅 {actual_len} 字，质量不达标，强制返回 WRITING 补写（不入完成计数）")
+            # 保持 AUDITING 状态，下一轮循环重新进入 AUDITING 进行补写决策
+            return
+
+        # 质量门通过，正式推进到 WRITING
         novel.current_stage = NovelStage.WRITING
 
-        # 5. 全书完成检测
+        #全书完成检测
         chapters = self.chapter_repository.list_by_novel(NovelId(novel.novel_id.value))
         completed = [c for c in chapters if c.status.value == "completed"]
         if len(completed) >= novel.target_chapters:
@@ -1083,6 +1247,11 @@ class AutopilotDaemon:
                 logger.warning("[%s] 定向修文未产生有效变化，停止继续重试", novel.novel_id)
                 break
 
+            # 情节保真度检查：改写后必须保留原文关键实体名
+            if not self._check_plot_fidelity(current_content, rewritten):
+                logger.warning("[%s] 定向修文丢失关键情节实体，回退到修文前版本", novel.novel_id)
+                break
+
             current_content = rewritten
             chapter.update_content(current_content)
             self.chapter_repository.save(chapter)
@@ -1100,6 +1269,32 @@ class AutopilotDaemon:
             )
 
         return current_content, current_result
+
+    @staticmethod
+    def _check_plot_fidelity(original: str, rewritten: str, threshold: float = 0.8) -> bool:
+        """检查改写后是否保留了原文关键实体名（2-4字中文专有名词）。
+
+        若保留率低于 threshold 则判定情节保真度不足。
+        """
+        import re
+        # 提取 2-4 字中文专有名词（人名、地名等）
+        _PROPER_NOUN_RE = re.compile(r'[一-鿿]{2,4}')
+        original_nouns = set(_PROPER_NOUN_RE.findall(original))
+        # 过滤常见非专有名词（虚词、动词等）
+        _STOP_WORDS = {"的是", "了他", "在了", "不是", "没有", "一个", "这个", "那个",
+                       "什么", "怎么", "已经", "可以", "因为", "所以", "但是", "如果",
+                       "虽然", "而且", "或者", "以及", "之后", "之前", "之间", "起来",
+                       "出来", "过来", "下去", "上去", "一下", "一直", "一些", "自己"}
+        original_nouns -= _STOP_WORDS
+        if not original_nouns:
+            return True
+        rewritten_nouns = set(_PROPER_NOUN_RE.findall(rewritten))
+        retained = original_nouns & rewritten_nouns
+        ratio = len(retained) / len(original_nouns)
+        if ratio < threshold:
+            logger.info(f"情节保真度检查：保留率 {ratio:.0%}（{len(retained)}/{len(original_nouns)}），低于阈值 {threshold:.0%}")
+            return False
+        return True
 
     def _legacy_auditing_tasks_and_voice(
         self,
@@ -1263,6 +1458,14 @@ class AutopilotDaemon:
         
         流式生成时会实时推送增量文字到 streaming_callback（如果设置）。
         """
+        # 熔断器二次检查：处理过程中熔断器可能被其他小说触发打开
+        if self.circuit_breaker and self.circuit_breaker.is_open():
+            wait = self.circuit_breaker.wait_seconds()
+            logger.warning(f"⚠️  LLM 调用前熔断器打开，暂停 {wait:.0f}s")
+            await asyncio.sleep(min(wait, self.poll_interval))
+            if self.circuit_breaker.is_open():
+                raise RuntimeError("Circuit breaker is open")
+
         content = ""
         stop_detected = asyncio.Event()
         watch_task = None
@@ -1321,6 +1524,7 @@ class AutopilotDaemon:
         novel=None,
         voice_anchors: str = "",
         chapter_draft_so_far: str = "",
+        scene_director: dict = None,
     ) -> str:
         """无 AutoNovelGenerationWorkflow 时的降级：爽文短 Prompt + 流式。"""
         va = (voice_anchors or "").strip()
@@ -1341,6 +1545,18 @@ class AutopilotDaemon:
         user_parts = []
         if context:
             user_parts.append(context)
+        if scene_director:
+            sd_parts = []
+            if scene_director.get("pov"):
+                sd_parts.append(f"视点人物：{scene_director['pov']}")
+            if scene_director.get("characters"):
+                sd_parts.append(f"本章角色：{', '.join(scene_director['characters'])}")
+            if scene_director.get("locations"):
+                sd_parts.append(f"场景地点：{', '.join(scene_director['locations'])}")
+            if scene_director.get("emotional_state"):
+                sd_parts.append(f"情绪基调：{scene_director['emotional_state']}")
+            if sd_parts:
+                user_parts.append("\n【场景导演指令】\n" + "\n".join(sd_parts))
         user_parts.append(f"\n【本章大纲】\n{outline}")
         prior = format_prior_draft_for_prompt(chapter_draft_so_far)
         if prior:
@@ -1352,10 +1568,14 @@ class AutopilotDaemon:
             user_parts.append(f"\n{beat_prompt}")
         user_parts.append("\n\n开始撰写：")
 
-        max_tokens = int(beat.target_words * 1.5) if beat else 3000
+        if beat:
+            max_tokens = int(beat.target_words * 1.5)
+        else:
+            tw = getattr(novel, 'target_words_per_chapter', None) if novel else None
+            max_tokens = int((tw or 2500) * 1.5)
 
         prompt = Prompt(system=system, user="\n".join(user_parts))
-        config = GenerationConfig(max_tokens=max_tokens, temperature=0.85)
+        config = GenerationConfig(max_tokens=max_tokens, temperature=0.8)
         return await self._stream_llm_with_stop_watch(prompt, config, novel=novel)
 
     async def _upsert_chapter_content(self, novel, chapter_node, content: str, status: str):
@@ -1389,17 +1609,23 @@ class AutopilotDaemon:
 
     async def _find_next_unwritten_chapter_async(self, novel):
         """找到下一个未写的章节节点"""
+        import asyncio
         novel_id = novel.novel_id.value
-        all_nodes = await self.story_node_repo.get_by_novel(novel_id)
+        all_nodes = await asyncio.to_thread(self.story_node_repo.get_by_novel_sync, novel_id)
         chapter_nodes = sorted(
             [n for n in all_nodes if n.node_type.value == "chapter"],
             key=lambda n: n.number
         )
 
+        # 批量查询替代 N+1 循环
+        chapter_numbers = [n.number for n in chapter_nodes]
+        chapters = await asyncio.to_thread(
+            self.chapter_repository.get_by_novel_and_numbers,
+            NovelId(novel_id), chapter_numbers
+        )
+        chapter_map = {c.number: c for c in chapters}
         for node in chapter_nodes:
-            chapter = self.chapter_repository.get_by_novel_and_number(
-                NovelId(novel_id), node.number
-            )
+            chapter = chapter_map.get(node.number)
             if not chapter or chapter.status.value != "completed":
                 return node
         return None
@@ -1420,13 +1646,21 @@ class AutopilotDaemon:
         if not current_act_node:
             return True
 
-        act_children = self.story_node_repo.get_children_sync(current_act_node.id)
+        import asyncio
+        act_children = await asyncio.to_thread(
+            self.story_node_repo.get_children_sync, current_act_node.id
+        )
         chapter_nodes = [n for n in act_children if n.node_type.value == "chapter"]
 
+        # 批量查询替代 N+1 循环
+        chapter_numbers = [n.number for n in chapter_nodes]
+        chapters = await asyncio.to_thread(
+            self.chapter_repository.get_by_novel_and_numbers,
+            NovelId(novel_id), chapter_numbers
+        )
+        chapter_map = {c.number: c for c in chapters}
         for node in chapter_nodes:
-            chapter = self.chapter_repository.get_by_novel_and_number(
-                NovelId(novel_id), node.number
-            )
+            chapter = chapter_map.get(node.number)
             if not chapter or chapter.status.value != "completed":
                 return False
         return True

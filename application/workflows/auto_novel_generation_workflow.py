@@ -14,9 +14,9 @@ from application.engine.dtos.scene_director_dto import SceneDirectorAnalysis
 from application.audit.dtos.ghost_annotation import GhostAnnotation
 from domain.novel.services.consistency_checker import ConsistencyChecker
 from domain.novel.services.storyline_manager import StorylineManager
-from domain.novel.repositories.plot_arc_repository import PlotArcRepository
-from domain.bible.repositories.bible_repository import BibleRepository
-from domain.novel.repositories.foreshadowing_repository import ForeshadowingRepository
+from domain.novel.repositories import PlotArcRepository
+from domain.world.repositories import BibleRepository
+from domain.novel.repositories import ForeshadowingRepository
 from domain.novel.value_objects.consistency_report import ConsistencyReport
 from domain.novel.value_objects.chapter_state import ChapterState
 from domain.novel.value_objects.consistency_context import ConsistencyContext
@@ -880,12 +880,20 @@ class AutoNovelGenerationWorkflow:
         # ⚡ 提示词集中管理说明：
         # 此模板对应 prompts_defaults.json 中的 id=workflow-chapter-generation
         # 如需修改提示词内容，请编辑 JSON 文件而非此代码文件
+        bridge_instruction = ""
+        if "RECENT CHAPTERS" in context or "最近章节" in context:
+            bridge_instruction = (
+                "\n9. 【上文承接】本章开头必须承接上一章末尾的情绪、画面或悬念，"
+                "自然延续而不另起炉灶。"
+            )
+
         system_message = f"""你是一位专业的网络小说作家。根据以下上下文撰写章节内容。
 
 {planning_section}{voice_block}{context}
 
 {fact_lock}
 写作要求：
+0. 【章节衔接】本章开头必须承接上一章末尾的情绪、画面或悬念（见上方「最近章节」或「RECENT CHAPTERS」），自然过渡而非另起炉灶。
 1. 必须有多个人物互动（至少2-3个角色出场）
 2. 必须有对话（不能只有独白和叙述）
 3. 必须有冲突或张力（人物之间的矛盾、目标阻碍、悬念等）
@@ -893,7 +901,7 @@ class AutoNovelGenerationWorkflow:
 5. 推进情节发展
 6. 使用生动的场景描写和细节
 {length_rule}
-8. 用中文写作，使用第三人称叙事{beat_extra}"""
+8. 用中文写作，使用第三人称叙事{beat_extra}{bridge_instruction}"""
 
         user_message = f"""请根据以下大纲撰写本章内容：
 
@@ -905,7 +913,7 @@ class AutoNovelGenerationWorkflow:
 - 必须有明确的冲突或戏剧张力
 - 场景要具体生动，不要空泛叙述
 - 推进主线情节，不要原地踏步
-- 结尾要有悬念或转折"""
+- 结尾必须为本章画上句号，同时为下一章埋下明确悬念——让读者非看下一章不可（例：未完成的对话突然中断、人物陷入危机、关键信息悬而未决）"""
 
         if beat_mode and prior_in_chapter:
             user_message += f"""
